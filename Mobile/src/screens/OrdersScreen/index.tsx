@@ -14,7 +14,6 @@ interface OrdersScreenProps {
 }
 
 const RESULT_DELAY_MS = 15 * 60 * 1000;
-const PAGE_SIZE = 20;
 
 const accents = [
   { color: '#2457CF', background: '#E9F0FF' },
@@ -82,6 +81,50 @@ function formatResultTime(
   }).format(resultMoment(openTime, closeTime, now));
 }
 
+function OrderStatusBar({ order }: { order: UserOrder }) {
+  const [now, setNow] = useState(() => new Date());
+  const pending = !order.result && order.isCurrentRound;
+
+  useEffect(() => {
+    if (!pending) {
+      return undefined;
+    }
+
+    const interval = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, [pending]);
+
+  const timer = timeLeft(order, now);
+
+  return (
+    <View
+      style={[
+        styles.timer,
+        timer.tone === 'won' && styles.timerWon,
+        timer.tone === 'lost' && styles.timerLost,
+        timer.tone === 'waiting' && styles.timerSettled,
+      ]}
+    >
+      <Text
+        style={[
+          styles.timerLabel,
+          timer.tone === 'waiting' && styles.timerSettledText,
+        ]}
+      >
+        {timer.label}
+      </Text>
+      <Text
+        style={[
+          styles.timerValue,
+          timer.tone === 'waiting' && styles.timerSettledText,
+        ]}
+      >
+        {timer.value}
+      </Text>
+    </View>
+  );
+}
+
 function timeLeft(
   order: UserOrder,
   now: Date,
@@ -125,10 +168,10 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [loadMoreError, setLoadMoreError] = useState('');
-  const [now, setNow] = useState(() => new Date());
   const pageRef = useRef(1);
   const hasMoreRef = useRef(false);
   const loadingMoreRef = useRef(false);
+  const allowNextPage = useRef(false);
 
   const loadOrders = useCallback(async (page = 1, append = false) => {
     if (append) {
@@ -182,44 +225,22 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     loadOrders(1);
   }, [isActive, loadOrders]);
 
-  useEffect(() => {
-    if (!isActive) return undefined;
-    const interval = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, [isActive]);
-
-  useEffect(() => {
-    if (!isActive) return undefined;
-    const interval = setInterval(() => {
-      fetchMyOrders(1)
-        .then(response => {
-          setOrders(current => {
-            const latestIds = new Set(response.items.map(order => order.id));
-            const olderOrders = current.filter(
-              order => !latestIds.has(order.id),
-            );
-            return [...response.items, ...olderOrders];
-          });
-          const more = response.pagination.hasMore || orders.length > PAGE_SIZE;
-          hasMoreRef.current = more;
-        })
-        .catch(refreshError => {
-          setError(
-            refreshError instanceof Error
-              ? refreshError.message
-              : 'Unable to refresh your orders.',
-          );
-        });
-    }, 20_000);
-    return () => clearInterval(interval);
-  }, [isActive, orders.length]);
-
   const loadNextPage = () => {
-    if (!loadingMoreRef.current && hasMoreRef.current) {
-      loadOrders(pageRef.current + 1, true);
+    if (
+      !allowNextPage.current ||
+      loadingMoreRef.current ||
+      !hasMoreRef.current
+    ) {
+      return;
     }
+
+    allowNextPage.current = false;
+    loadOrders(pageRef.current + 1, true);
   };
-  console.log(orders);
+
+  const enableNextPage = () => {
+    allowNextPage.current = true;
+  };
   return (
     <ScreenLayout showHeader={false}>
       <NavHeader title="Orders" onBack={onBack} />
@@ -231,6 +252,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         showsVerticalScrollIndicator={false}
         onEndReached={loadNextPage}
         onEndReachedThreshold={0.4}
+        onScrollBeginDrag={enableNextPage}
+        onMomentumScrollBegin={enableNextPage}
         ListEmptyComponent={
           isLoading ? (
             <View style={styles.statusBlock}>
@@ -272,7 +295,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         }
         renderItem={({ item: order }) => {
           const accent = accentFor(order.symbol);
-          const timer = timeLeft(order, now);
+          const resultTime = formatResultTime(
+            order.openTime,
+            order.closeTime,
+            new Date(),
+          );
 
           return (
             <View key={order.id} style={styles.card}>
@@ -308,9 +335,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                 </View>
                 <View style={styles.timeBlock}>
                   <Text style={styles.timeLabel}>Result time</Text>
-                  <Text style={styles.timeValue}>
-                    {formatResultTime(order.openTime, order.closeTime, now)}
-                  </Text>
+                  <Text style={styles.timeValue}>{resultTime}</Text>
                 </View>
               </View>
 
@@ -345,31 +370,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                 </View>
               </View>
 
-              <View
-                style={[
-                  styles.timer,
-                  timer.tone === 'won' && styles.timerWon,
-                  timer.tone === 'lost' && styles.timerLost,
-                  timer.tone === 'waiting' && styles.timerSettled,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.timerLabel,
-                    timer.tone === 'waiting' && styles.timerSettledText,
-                  ]}
-                >
-                  {timer.label}
-                </Text>
-                <Text
-                  style={[
-                    styles.timerValue,
-                    timer.tone === 'waiting' && styles.timerSettledText,
-                  ]}
-                >
-                  {timer.value}
-                </Text>
-              </View>
+              <OrderStatusBar order={order} />
             </View>
           );
         }}

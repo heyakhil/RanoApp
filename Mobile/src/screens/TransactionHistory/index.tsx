@@ -58,6 +58,7 @@ export const TransactionHistoryScreen: React.FC<
   const pageRef = useRef(1);
   const hasMoreRef = useRef(false);
   const loadingMoreRef = useRef(false);
+  const allowNextPage = useRef(false);
 
   const loadTransactions = useCallback(async (page = 1, append = false) => {
     if (append) {
@@ -113,9 +114,16 @@ export const TransactionHistoryScreen: React.FC<
   }, [loadTransactions]);
 
   const loadNextPage = () => {
-    if (!loadingMoreRef.current && hasMoreRef.current) {
-      loadTransactions(pageRef.current + 1, true);
+    if (
+      !allowNextPage.current ||
+      loadingMoreRef.current ||
+      !hasMoreRef.current
+    ) {
+      return;
     }
+
+    allowNextPage.current = false;
+    loadTransactions(pageRef.current + 1, true);
   };
 
   const renderTransaction = ({
@@ -182,6 +190,12 @@ export const TransactionHistoryScreen: React.FC<
           showsVerticalScrollIndicator={false}
           onEndReached={loadNextPage}
           onEndReachedThreshold={0.4}
+          onScrollBeginDrag={() => {
+            allowNextPage.current = true;
+          }}
+          onMomentumScrollBegin={() => {
+            allowNextPage.current = true;
+          }}
           renderItem={renderTransaction}
           ListEmptyComponent={
             <Text style={styles.empty}>No recharge or withdrawal yet</Text>

@@ -137,6 +137,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   const pageRef = useRef(1);
   const hasMoreRef = useRef(false);
   const loadingMoreRef = useRef(false);
+  const allowNextPage = useRef(false);
   const requestVersionRef = useRef(0);
 
   const loadHistory = useCallback(
@@ -204,9 +205,16 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
 
   const days = useMemo(() => groupByDay(rounds), [rounds]);
   const loadNextPage = () => {
-    if (!loadingMoreRef.current && hasMoreRef.current) {
-      loadHistory(pageRef.current + 1, true);
+    if (
+      !allowNextPage.current ||
+      loadingMoreRef.current ||
+      !hasMoreRef.current
+    ) {
+      return;
     }
+
+    allowNextPage.current = false;
+    loadHistory(pageRef.current + 1, true);
   };
 
   return (
@@ -250,6 +258,12 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
         showsVerticalScrollIndicator={false}
         onEndReached={loadNextPage}
         onEndReachedThreshold={0.4}
+        onScrollBeginDrag={() => {
+          allowNextPage.current = true;
+        }}
+        onMomentumScrollBegin={() => {
+          allowNextPage.current = true;
+        }}
         ListEmptyComponent={
           isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />

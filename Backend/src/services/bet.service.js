@@ -462,44 +462,73 @@ export async function declareMarketResult(marketId, result, options = {}) {
 
     const entries = await tx.marketEntry.findMany({
       where: { marketId, roundNumber: market.currentRound },
+      select: {
+        id: true,
+        userId: true,
+        amount: true,
+        pickedNumber: true,
+      },
     });
     let winnerCount = 0;
     let totalPayout = new Prisma.Decimal(0);
+    let totalBetAmount = new Prisma.Decimal(0);
     const alerts = [];
+    const winners = [];
 
     for (const entry of entries) {
+      totalBetAmount = totalBetAmount.add(entry.amount);
       const multiplier = payoutMultiplier(entry.pickedNumber, result);
+      const payout = multiplier === 0
+        ? null
+        : new Prisma.Decimal(entry.amount).mul(multiplier);
+
       alerts.push({
         userId: entry.userId,
-        payout: null,
+        payout: payout == null ? null : moneyNumber(payout),
       });
 
-      if (multiplier === 0) {
+      if (payout == null) {
         continue;
       }
 
-      const payout = new Prisma.Decimal(entry.amount).mul(multiplier);
       totalPayout = totalPayout.add(payout);
       winnerCount += 1;
-      alerts[alerts.length - 1].payout = moneyNumber(payout);
-
-      await tx.user.update({
-        where: { id: entry.userId },
-        data: { walletBalance: { increment: payout } },
-      });
-      await tx.marketEntry.update({
-        where: { id: entry.id },
-        data: { payoutAmount: payout },
+      winners.push({
+        entryId: entry.id,
+        userId: entry.userId,
+        payout,
       });
     }
 
-    const aggregate = await tx.marketEntry.aggregate({
-      where: { marketId, roundNumber: market.currentRound },
-      _sum: { amount: true },
-      _count: { _all: true },
-    });
-    const participantCount = aggregate._count._all;
-    const totalBetAmount = aggregate._sum.amount ?? 0;
+    if (winners.length > 0) {
+      await tx.$executeRaw`
+        UPDATE users
+        SET wallet_balance = CASE id
+          ${Prisma.join(
+            winners.map(
+              (winner) =>
+                Prisma.sql`WHEN ${winner.userId} THEN wallet_balance + ${winner.payout}`,
+            ),
+          )}
+          ELSE wallet_balance
+        END
+        WHERE id IN (${Prisma.join(winners.map((winner) => winner.userId))})
+      `;
+      await tx.$executeRaw`
+        UPDATE market_entries
+        SET payout_amount = CASE id
+          ${Prisma.join(
+            winners.map(
+              (winner) => Prisma.sql`WHEN ${winner.entryId} THEN ${winner.payout}`,
+            ),
+          )}
+          ELSE payout_amount
+        END
+        WHERE id IN (${Prisma.join(winners.map((winner) => winner.entryId))})
+      `;
+    }
+
+    const participantCount = entries.length;
     const shares = splitCommission(totalBetAmount);
 
     await tx.marketRound.create({
@@ -572,7 +601,11 @@ export async function declareMarketResult(marketId, result, options = {}) {
   }
 
   const { alerts, marketName } = outcome;
-  await notifyDeclaredResult(marketName, result, alerts);
+  if (options.notify === false) {
+    outcome.pendingNotification = { marketName, result, alerts };
+  } else {
+    void notifyDeclaredResult(marketName, result, alerts);
+  }
   delete outcome.alerts;
   delete outcome.marketName;
   return outcome;
@@ -588,10 +621,45 @@ export async function settleDueMarkets(now = new Date()) {
   }
 
   const markets = await prisma.market.findMany();
-  const dueMarkets = markets.filter((market) => isResultDue(market, now));
+  const dueBySchedule = markets.filter((market) => isResultDue(market, now));
+
+  if (dueBySchedule.length === 0) {
+    return { settled: [], skipped: [] };
+  }
+
+  const dueIds = dueBySchedule.map((market) => market.id);
+  const settledToday = await prisma.marketRound.findMany({
+    where: {
+      marketId: { in: dueIds },
+      settledOn: settlementDate(now),
+    },
+    select: {
+      marketId: true,
+      roundNumber: true,
+      result: true,
+    },
+  });
+  const settledTodayByMarket = new Map(
+    settledToday.map((round) => [round.marketId, round]),
+  );
+  const skipped = dueBySchedule
+    .filter((market) => settledTodayByMarket.has(market.id))
+    .map((market) => {
+      const round = settledTodayByMarket.get(market.id);
+      return {
+        marketId: market.id,
+        symbol: market.symbol,
+        reason: 'A result is already recorded for this market today',
+        settledRound: round.roundNumber,
+        result: round.result,
+      };
+    });
+  const dueMarkets = dueBySchedule.filter(
+    (market) => !settledTodayByMarket.has(market.id),
+  );
 
   if (dueMarkets.length === 0) {
-    return { settled: [], skipped: [] };
+    return { settled: [], skipped };
   }
 
   const quotes = await fetchMarketQuotes(dueMarkets.map((market) => market.symbol));
@@ -599,46 +667,56 @@ export async function settleDueMarkets(now = new Date()) {
     quotes.map((quote) => [String(quote.symbol ?? '').toUpperCase(), quote]),
   );
   const settled = [];
-  const skipped = [];
+  const pendingNotifications = [];
 
-  for (const market of dueMarkets) {
-    const quote = quotesBySymbol.get(market.symbol.toUpperCase());
-    if (!quote || quote.regularMarketPrice == null) {
-      console.error(`No regularMarketPrice for ${market.symbol}`);
-      skipped.push({
-        marketId: market.id,
-        symbol: market.symbol,
-        reason: 'No regularMarketPrice was returned by the quote provider',
-      });
-      continue;
-    }
-
-    const result = digitsAfterDecimal(quote.regularMarketPrice);
-    let outcome;
-    try {
-      outcome = await declareMarketResult(market.id, result, {
-        closeAt: sessionClose(
-          market.openTime,
-          market.closeTime,
-          now,
-          market.lastSettledClose,
-        ),
-        price: quote.regularMarketPrice,
-      });
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.code !== 'MARKET_RESULT_EXISTS') {
-        throw error;
+  await Promise.all(
+    dueMarkets.map(async (market) => {
+      const quote = quotesBySymbol.get(market.symbol.toUpperCase());
+      if (!quote || quote.regularMarketPrice == null) {
+        console.error(`No regularMarketPrice for ${market.symbol}`);
+        skipped.push({
+          marketId: market.id,
+          symbol: market.symbol,
+          reason: 'No regularMarketPrice was returned by the quote provider',
+        });
+        return;
       }
 
-      skipped.push({
-        marketId: market.id,
-        symbol: market.symbol,
-        reason: error.message,
-      });
-      continue;
-    }
+      const result = digitsAfterDecimal(quote.regularMarketPrice);
+      let outcome;
+      try {
+        outcome = await declareMarketResult(market.id, result, {
+          closeAt: sessionClose(
+            market.openTime,
+            market.closeTime,
+            now,
+            market.lastSettledClose,
+          ),
+          price: quote.regularMarketPrice,
+          notify: false,
+        });
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== 'MARKET_RESULT_EXISTS') {
+          throw error;
+        }
 
-    if (outcome) {
+        skipped.push({
+          marketId: market.id,
+          symbol: market.symbol,
+          reason: error.message,
+        });
+        return;
+      }
+
+      if (!outcome) {
+        return;
+      }
+
+      if (outcome.pendingNotification) {
+        pendingNotifications.push(outcome.pendingNotification);
+        delete outcome.pendingNotification;
+      }
+
       settled.push({
         marketId: market.id,
         symbol: market.symbol,
@@ -647,7 +725,15 @@ export async function settleDueMarkets(now = new Date()) {
         winnerCount: outcome.winnerCount,
         totalPayout: outcome.totalPayout,
       });
-    }
+    }),
+  );
+
+  if (pendingNotifications.length > 0) {
+    void Promise.all(
+      pendingNotifications.map((notice) =>
+        notifyDeclaredResult(notice.marketName, notice.result, notice.alerts),
+      ),
+    );
   }
 
   return { settled, skipped };
