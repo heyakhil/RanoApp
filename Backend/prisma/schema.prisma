@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Gender {
+  male
+  female
+  other
+  prefer_not_to_say
+}
+
+enum RechargeStatus {
+  pending
+  accepted
+  rejected
+}
+
+enum WithdrawalStatus {
+  pending
+  accepted
+  rejected
+}
+
+model User {
+  id                String              @id @default(cuid())
+  firebaseUid       String              @unique @map("firebase_uid") @db.VarChar(128)
+  email             String              @db.VarChar(255)
+  photoUrl          String?             @map("photo_url") @db.Text
+  name              String?             @db.VarChar(120)
+  mobile            String?             @db.VarChar(20)
+  dob               DateTime?           @db.Date
+  gender            Gender?
+  walletBalance     Decimal             @default(0) @map("wallet_balance") @db.Decimal(12, 2)
+  isProfileComplete Boolean             @default(false) @map("is_profile_complete")
+  lastLoginAt       DateTime?           @map("last_login_at")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  recharges         RechargeRequest[]
+  upiAccounts       UpiAccount[]
+  withdrawals       WithdrawalRequest[]
+  deviceTokens      DeviceToken[]
+  marketEntries     MarketEntry[]
+
+  @@index([email])
+  @@index([isProfileComplete])
+  @@map("users")
+}
+
+model RechargeRequest {
+  id             String         @id @default(cuid())
+  userId         String         @map("user_id")
+  amount         Decimal        @db.Decimal(12, 2)
+  referenceId    String         @map("reference_id") @db.VarChar(80)
+  screenshotPath String         @map("screenshot_path") @db.Text
+  status         RechargeStatus @default(pending)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  reviewedAt     DateTime?      @map("reviewed_at")
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status, createdAt])
+  @@map("recharge_requests")
+}
+
+model UpiAccount {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  upiId     String   @map("upi_id") @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, upiId])
+  @@index([userId])
+  @@map("upi_accounts")
+}
+
+model WithdrawalRequest {
+  id         String           @id @default(cuid())
+  userId     String           @map("user_id")
+  amount     Decimal          @db.Decimal(12, 2)
+  upiId      String           @map("upi_id") @db.VarChar(255)
+  status     WithdrawalStatus @default(pending)
+  createdAt  DateTime         @default(now()) @map("created_at")
+  reviewedAt DateTime?        @map("reviewed_at")
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status, createdAt])
+  @@map("withdrawal_requests")
+}
+
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+model Market {
+  id              String   @id @default(cuid())
+  slot            Int      @unique @db.UnsignedTinyInt
+  name            String   @db.VarChar(80)
+  symbol          String   @unique @db.VarChar(20)
+  imageUrl        String   @default("") @map("image_url") @db.VarChar(1024)
+  openTime        String   @map("open_time") @db.VarChar(5)
+  closeTime       String   @map("close_time") @db.VarChar(5)
+  maxParticipants Int      @map("max_participants")
+  participants    Int      @default(0)
+  entryAmount     Decimal        @map("entry_amount") @db.Decimal(10, 2)
+  currentRound     Int            @default(1) @map("current_round")
+  lastResult       String?        @map("last_result") @db.VarChar(120)
+  lastSettledClose DateTime?      @map("last_settled_close")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  entries         MarketEntry[]
+  rounds          MarketRound[]
+  commissions     CommissionEntry[]
+
+  @@index([openTime])
+  @@map("markets")
+}
+
+model MarketEntry {
+  id          String   @id @default(cuid())
+  marketId    String   @map("market_id")
+  roundNumber Int      @map("round_number")
+  userId       String   @map("user_id")
+  amount       Decimal  @db.Decimal(12, 2)
+  pickedNumber Int?     @map("picked_number")
+  payoutAmount Decimal? @map("payout_amount") @db.Decimal(12, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, roundNumber, userId])
+  @@index([userId])
+  @@map("market_entries")
+}
+
+model MarketRound {
+  id               String   @id @default(cuid())
+  marketId         String   @map("market_id")
+  roundNumber      Int      @map("round_number")
+  result           String   @db.VarChar(120)
+  participantCount Int      @map("participant_count")
+  totalBetAmount   Decimal  @map("total_bet_amount") @db.Decimal(12, 2)
+  commissionAmount Decimal  @map("commission_amount") @db.Decimal(12, 2)
+  adminShare       Decimal  @map("admin_share") @db.Decimal(12, 2)
+  subadminShare    Decimal  @map("subadmin_share") @db.Decimal(12, 2)
+  settledAt        DateTime @default(now()) @map("settled_at")
+  settledOn        DateTime @map("settled_on") @db.Date
+  market           Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, roundNumber])
+  @@unique([marketId, settledOn])
+  @@index([settledAt])
+  @@map("market_rounds")
+}
+
+model PaymentDestination {
+  id         String   @id @default("default")
+  upiId      String   @map("upi_id") @db.VarChar(255)
+  qrImageUrl String   @default("") @map("qr_image_url") @db.Text
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("payment_destinations")
+}
+
+model CommissionEntry {
+  id          String   @id @default(cuid())
+  marketId    String   @map("market_id")
+  roundNumber Int      @map("round_number")
+  role        String   @db.VarChar(20)
+  amount      Decimal  @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+  market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([role])
+  @@index([marketId, roundNumber])
+  @@map("commission_entries")
+}

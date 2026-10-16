@@ -1,0 +1,65 @@
+import { StyleSheet } from 'react-native';
+import { colors } from '../../../theme';
+
+export const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderRadius: 18,
+    marginBottom: 12,
+  },
+  content: { paddingVertical: 17, paddingHorizontal: 16 },
+  topRow: { flexDirection: 'row', alignItems: 'center' },
+  logo: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoText: { fontWeight: '800', fontSize: 21 },
+  logoImage: { width: 25, height: 25, borderRadius: 6 },
+  identity: { flex: 1, paddingHorizontal: 11 },
+  symbol: { color: colors.text, fontWeight: '800', lineHeight: 21 },
+  company: { color: colors.textSecondary },
+  statusChip: { height: 30, justifyContent: 'center' },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginVertical: 0,
+    marginHorizontal: 9,
+  },
+  question: {
+    fontWeight: '700',
+    color: colors.text,
+    marginTop: 16,
+    lineHeight: 24,
+  },
+  scheduleRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  schedule: { color: colors.textSecondary, marginLeft: 5, flexShrink: 1 },
+  divider: { height: 1, backgroundColor: colors.border, marginVertical: 16 },
+  progressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  progressLabel: { color: colors.textSecondary },
+  progressCount: { color: colors.text, fontWeight: '700' },
+  progress: {
+    height: 7,
+    borderRadius: 8,
+    backgroundColor: colors.muted,
+    marginTop: 10,
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  spots: { color: colors.textSecondary },
+  entryRow: { flexDirection: 'row', alignItems: 'center' },
+  entryLabel: { color: colors.textSecondary, marginRight: 6 },
+  entryValue: { color: colors.text, fontWeight: '800', marginRight: 2 },
+  joined: { color: colors.secondary, fontWeight: '700', marginRight: 6 },
+});

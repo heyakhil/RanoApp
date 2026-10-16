@@ -1,0 +1,1 @@
+ALTER TABLE `markets` ADD COLUMN `image_url` VARCHAR(1024) NOT NULL DEFAULT '';

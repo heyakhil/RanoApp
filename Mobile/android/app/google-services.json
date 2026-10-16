@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "979849513501",
+    "project_id": "rano-app-44dc1",
+    "storage_bucket": "rano-app-44dc1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:979849513501:android:ca533263623a414de054f4",
+        "android_client_info": {
+          "package_name": "com.ranoapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "979849513501-0ftqchmrfspcha4sbcdh6epq2e1mjf3k.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ranoapp",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "979849513501-582afh0f5c0qj74pr2e1nbn8fujjsogg.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDErhu0OIT5N7QTiaEJ_js4HFBOM0U1t4o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "979849513501-582afh0f5c0qj74pr2e1nbn8fujjsogg.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
