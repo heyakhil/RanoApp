@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  View,
+} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import { showMessage } from 'react-native-flash-message';
 import { Avatar, Text } from 'react-native-paper';
@@ -67,6 +73,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const displayName = user?.name?.trim() || 'Rano User';
   const email = user?.email ?? '';
   const [balance, setBalance] = useState('0');
+  const [isBalanceLoading, setIsBalanceLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -89,6 +96,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               : 'Could not load your wallet balance. Please try again.',
           type: 'danger',
         });
+      })
+      .finally(() => {
+        if (active) {
+          setIsBalanceLoading(false);
+        }
       });
 
     return () => {
@@ -142,7 +154,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
               <View style={styles.balanceBox}>
                 <Text style={styles.balanceLabel}>Available Balance</Text>
-                <Text style={styles.balanceValue}>{formatBalance(balance)}</Text>
+                {isBalanceLoading ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.primary}
+                    accessibilityLabel="Loading balance"
+                  />
+                ) : (
+                  <Text style={styles.balanceValue}>
+                    {formatBalance(balance)}
+                  </Text>
+                )}
               </View>
             </View>
           </LinearGradient>

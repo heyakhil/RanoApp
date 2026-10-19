@@ -14,7 +14,8 @@ function toMinutes(time) {
 }
 
 export function isMarketOpen(openTime, closeTime, now = new Date()) {
-  const current = now.getHours() * 60 + now.getMinutes();
+  const parts = indiaDateTimeParts(now);
+  const current = Number(parts.hour) * 60 + Number(parts.minute);
   const open = toMinutes(openTime);
   const close = toMinutes(closeTime);
 
@@ -38,6 +39,42 @@ function indiaDateKey(value) {
   }).format(value);
 }
 
+function indiaDateTimeParts(value) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(value)
+      .filter((part) => part.type !== 'literal')
+      .map(({ type, value: partValue }) => [type, partValue]),
+  );
+}
+
+function nextIndiaDate(dateKey) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+}
+
+export function sessionCloseForEntry(openTime, closeTime, createdAt) {
+  const parts = indiaDateTimeParts(createdAt);
+  const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
+  const openMinutes = toMinutes(openTime);
+  const closeMinutes = toMinutes(closeTime);
+  let dateKey = `${parts.year}-${parts.month}-${parts.day}`;
+
+  if (closeMinutes < openMinutes && currentMinutes >= openMinutes) {
+    dateKey = nextIndiaDate(dateKey);
+  }
+
+  return new Date(`${dateKey}T${closeTime}:00+05:30`);
+}
+
 function settlementDate(now = new Date()) {
   const formatted = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
@@ -55,8 +92,8 @@ function uniqueConstraint(error) {
   return Array.isArray(target) ? target.join(',') : String(target ?? '');
 }
 
-export function splitCommission(totalBetAmount) {
-  const totalPaise = Math.round(Number(totalBetAmount) * 100);
+export function splitCommission(betAmount) {
+  const totalPaise = Math.round(Number(betAmount) * 100);
   const commissionPaise = Math.round((totalPaise * env.commissionPercent) / 100);
   const adminPaise = Math.floor(commissionPaise / 2);
 
@@ -65,6 +102,50 @@ export function splitCommission(totalBetAmount) {
     adminShare: adminPaise / 100,
     subadminShare: (commissionPaise - adminPaise) / 100,
   };
+}
+
+async function creditBetCommission(tx, entry) {
+  const shares = splitCommission(entry.amount);
+  if (shares.commissionAmount === 0) return;
+
+  const accounts = await tx.adminAccount.findMany({
+    where: { role: { in: ['admin', 'subadmin'] } },
+    select: { id: true, role: true },
+  });
+  const accountByRole = new Map(accounts.map((account) => [account.role, account]));
+  const adminAccount = accountByRole.get('admin');
+  const subadminAccount = accountByRole.get('subadmin');
+
+  if (!adminAccount || !subadminAccount) {
+    throw new ApiError(
+      503,
+      'Admin and subadmin commission accounts must be configured before bets can be placed',
+      'COMMISSION_ACCOUNTS_NOT_CONFIGURED',
+    );
+  }
+
+  const commissionRows = [
+    { account: adminAccount, role: 'admin', amount: shares.adminShare },
+    { account: subadminAccount, role: 'subadmin', amount: shares.subadminShare },
+  ].filter((row) => row.amount > 0);
+
+  for (const row of commissionRows) {
+    await tx.adminAccount.update({
+      where: { id: row.account.id },
+      data: { commissionBalance: { increment: row.amount } },
+    });
+  }
+
+  await tx.commissionEntry.createMany({
+    data: commissionRows.map((row) => ({
+      marketId: entry.marketId,
+      roundNumber: entry.roundNumber,
+      marketEntryId: entry.id,
+      accountId: row.account.id,
+      role: row.role,
+      amount: row.amount,
+    })),
+  });
 }
 
 async function roundTotals(markets) {
@@ -188,6 +269,7 @@ export async function listUserOrders(userId, { page, pageSize }) {
       by: ['marketId', 'roundNumber'],
       where: { OR: roundKeys },
       _count: { _all: true },
+      _min: { createdAt: true },
     }),
   ]);
 
@@ -212,9 +294,18 @@ export async function listUserOrders(userId, { page, pageSize }) {
       (group) =>
         group.marketId === entry.marketId && group.roundNumber === entry.roundNumber,
     );
+    const roundStartedAt = liveCount?._min.createdAt ?? entry.createdAt;
     const participants = isCurrentRound
       ? liveCount?._count._all ?? 0
       : settled?.participantCount ?? liveCount?._count._all ?? 0;
+    const scheduledResultAt = new Date(
+      sessionCloseForEntry(
+        entry.market.openTime,
+        entry.market.closeTime,
+        roundStartedAt,
+      ).getTime() +
+        env.resultDelayMinutes * 60 * 1000,
+    );
 
     return {
       id: entry.id,
@@ -231,8 +322,10 @@ export async function listUserOrders(userId, { page, pageSize }) {
       openTime: entry.market.openTime,
       closeTime: entry.market.closeTime,
       result: settled?.result ?? null,
+      roundStatus: settled?.status ?? (isLiveRound ? 'pending' : 'settled'),
       isCurrentRound,
       createdAt: entry.createdAt,
+      scheduledResultAt: scheduledResultAt.toISOString(),
     };
   });
 
@@ -251,7 +344,7 @@ export async function listJoinedMarketIds(userId) {
     return [];
   }
 
-  const entries = await prisma.marketEntry.findMany({
+  const entries = await prisma.marketParticipation.findMany({
     where: {
       userId,
       OR: markets.map((market) => ({
@@ -265,7 +358,34 @@ export async function listJoinedMarketIds(userId) {
   return entries.map((entry) => entry.marketId);
 }
 
+async function cancelStaleRoundBeforeBet(marketId, now = new Date()) {
+  const market = await prisma.market.findUnique({ where: { id: marketId } });
+  if (!market) {
+    return;
+  }
+
+  const firstEntry = await prisma.marketEntry.findFirst({
+    where: { marketId, roundNumber: market.currentRound },
+    orderBy: { createdAt: 'asc' },
+    select: { createdAt: true },
+  });
+  if (!firstEntry || !isResultDue(market, now, firstEntry.createdAt)) {
+    return;
+  }
+
+  const closeAt = sessionCloseForEntry(
+    market.openTime,
+    market.closeTime,
+    firstEntry.createdAt,
+  );
+  if (indiaDateKey(now) !== indiaDateKey(closeAt)) {
+    await cancelMarketRound(market, closeAt);
+  }
+}
+
 export async function joinMarket(userId, marketId, pickedNumber) {
+  await cancelStaleRoundBeforeBet(marketId);
+
   return prisma.$transaction(async (tx) => {
     const market = await tx.market.findUnique({ where: { id: marketId } });
 
@@ -275,6 +395,22 @@ export async function joinMarket(userId, marketId, pickedNumber) {
 
     if (!isMarketOpen(market.openTime, market.closeTime)) {
       throw new ApiError(400, 'This market is not open for joining', 'MARKET_NOT_OPEN');
+    }
+
+    try {
+      await tx.marketParticipation.create({
+        data: {
+          marketId,
+          roundNumber: market.currentRound,
+          userId,
+        },
+      });
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        throw new ApiError(409, 'You have already bet in this market round', 'ALREADY_JOINED');
+      }
+
+      throw error;
     }
 
     const reserved = await tx.market.updateMany({
@@ -299,23 +435,16 @@ export async function joinMarket(userId, marketId, pickedNumber) {
       throw new ApiError(400, 'Insufficient wallet balance', 'INSUFFICIENT_BALANCE');
     }
 
-    try {
-      await tx.marketEntry.create({
-        data: {
-          marketId,
-          roundNumber: market.currentRound,
-          userId,
-          amount: market.entryAmount,
-          pickedNumber,
-        },
-      });
-    } catch (error) {
-      if (error?.code === 'P2002') {
-        throw new ApiError(409, 'You have already joined this market', 'ALREADY_JOINED');
-      }
-
-      throw error;
-    }
+    const entry = await tx.marketEntry.create({
+      data: {
+        marketId,
+        roundNumber: market.currentRound,
+        userId,
+        amount: market.entryAmount,
+        pickedNumber,
+      },
+    });
+    await creditBetCommission(tx, entry);
 
     const user = await tx.user.findUnique({
       where: { id: userId },
@@ -335,35 +464,36 @@ export async function joinMarket(userId, marketId, pickedNumber) {
 }
 
 export function sessionClose(openTime, closeTime, now = new Date(), lastSettledClose = null) {
-  const [hours, minutes] = closeTime.split(':').map(Number);
-  const close = new Date(now);
-  close.setHours(hours, minutes, 0, 0);
-
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const openMinutes = Number(openTime.slice(0, 2)) * 60 + Number(openTime.slice(3));
-  const closeMinutes = hours * 60 + minutes;
+  const parts = indiaDateTimeParts(now);
+  const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
+  const openMinutes = toMinutes(openTime);
+  const closeMinutes = toMinutes(closeTime);
+  let dateKey = `${parts.year}-${parts.month}-${parts.day}`;
 
   if (closeTime < openTime && currentMinutes >= openMinutes) {
-    close.setDate(close.getDate() + 1);
+    dateKey = nextIndiaDate(dateKey);
   } else if (
     closeTime < openTime &&
     currentMinutes > closeMinutes &&
     lastSettledClose &&
-    new Date(lastSettledClose).getTime() >= close.getTime()
+    new Date(lastSettledClose).getTime() >=
+      new Date(`${dateKey}T${closeTime}:00+05:30`).getTime()
   ) {
-    close.setDate(close.getDate() + 1);
+    dateKey = nextIndiaDate(dateKey);
   }
 
-  return close;
+  return new Date(`${dateKey}T${closeTime}:00+05:30`);
 }
 
-export function isResultDue(market, now = new Date()) {
-  const close = sessionClose(
-    market.openTime,
-    market.closeTime,
-    now,
-    market.lastSettledClose,
-  );
+export function isResultDue(market, now = new Date(), roundStartedAt = null) {
+  const close = roundStartedAt
+    ? sessionCloseForEntry(market.openTime, market.closeTime, roundStartedAt)
+    : sessionClose(
+        market.openTime,
+        market.closeTime,
+        now,
+        market.lastSettledClose,
+      );
   const dueAt = close.getTime() + env.resultDelayMinutes * 60 * 1000;
 
   if (now.getTime() < dueAt) {
@@ -529,8 +659,6 @@ export async function declareMarketResult(marketId, result, options = {}) {
     }
 
     const participantCount = entries.length;
-    const shares = splitCommission(totalBetAmount);
-
     await tx.marketRound.create({
       data: {
         marketId,
@@ -538,28 +666,9 @@ export async function declareMarketResult(marketId, result, options = {}) {
         result,
         participantCount,
         totalBetAmount,
-        commissionAmount: shares.commissionAmount,
-        adminShare: shares.adminShare,
-        subadminShare: shares.subadminShare,
         settledOn,
       },
     });
-
-    const commissionRows = [
-      { role: 'admin', amount: shares.adminShare },
-      { role: 'subadmin', amount: shares.subadminShare },
-    ].filter((row) => row.amount > 0);
-
-    if (commissionRows.length > 0) {
-      await tx.commissionEntry.createMany({
-        data: commissionRows.map((row) => ({
-          marketId,
-          roundNumber: market.currentRound,
-          role: row.role,
-          amount: row.amount,
-        })),
-      });
-    }
 
     const restarted = await tx.market.update({
       where: { id: marketId },
@@ -581,7 +690,6 @@ export async function declareMarketResult(marketId, result, options = {}) {
       price: options.price ?? null,
       marketName: market.name,
       alerts,
-      ...shares,
     };
     });
   } catch (error) {
@@ -611,20 +719,157 @@ export async function declareMarketResult(marketId, result, options = {}) {
   return outcome;
 }
 
+async function cancelMarketRound(market, closeAt) {
+  return prisma.$transaction(async (tx) => {
+    const reserved = await tx.market.updateMany({
+      where: {
+        id: market.id,
+        currentRound: market.currentRound,
+        OR: [{ lastSettledClose: null }, { lastSettledClose: { lt: closeAt } }],
+      },
+      data: { lastSettledClose: closeAt },
+    });
+
+    if (reserved.count !== 1) {
+      return null;
+    }
+
+    const entries = await tx.marketEntry.findMany({
+      where: { marketId: market.id, roundNumber: market.currentRound },
+      select: { userId: true, amount: true },
+    });
+
+    if (entries.length === 0) {
+      return null;
+    }
+
+    const refundByUser = new Map();
+    let totalRefund = new Prisma.Decimal(0);
+    for (const entry of entries) {
+      const amount = new Prisma.Decimal(entry.amount);
+      totalRefund = totalRefund.add(amount);
+      refundByUser.set(
+        entry.userId,
+        (refundByUser.get(entry.userId) ?? new Prisma.Decimal(0)).add(amount),
+      );
+    }
+
+    for (const [userId, amount] of refundByUser) {
+      await tx.user.update({
+        where: { id: userId },
+        data: { walletBalance: { increment: amount } },
+      });
+    }
+
+    const commissionGroups = await tx.commissionEntry.groupBy({
+      by: ['accountId', 'role', 'marketEntryId'],
+      where: {
+        marketId: market.id,
+        roundNumber: market.currentRound,
+        marketEntryId: { not: null },
+        accountId: { not: null },
+      },
+      _sum: { amount: true },
+    });
+
+    for (const group of commissionGroups) {
+      if (group.accountId && group._sum.amount) {
+        await tx.adminAccount.update({
+          where: { id: group.accountId },
+          data: { commissionBalance: { decrement: group._sum.amount } },
+        });
+      }
+    }
+
+    if (commissionGroups.length > 0) {
+      await tx.commissionEntry.createMany({
+        data: commissionGroups
+          .filter((group) => group.accountId && group.marketEntryId && group._sum.amount)
+          .map((group) => ({
+            marketId: market.id,
+            roundNumber: market.currentRound,
+            accountId: group.accountId,
+            role: group.role,
+            marketEntryId: group.marketEntryId,
+            amount: new Prisma.Decimal(group._sum.amount).mul(-1),
+          })),
+      });
+    }
+    await tx.marketRound.create({
+      data: {
+        marketId: market.id,
+        roundNumber: market.currentRound,
+        result: null,
+        status: 'canceled',
+        participantCount: entries.length,
+        totalBetAmount: totalRefund,
+        settledOn: settlementDate(closeAt),
+      },
+    });
+    await tx.market.update({
+      where: { id: market.id },
+      data: {
+        participants: 0,
+        currentRound: { increment: 1 },
+      },
+    });
+
+    return {
+      marketId: market.id,
+      symbol: market.symbol,
+      canceledRound: market.currentRound,
+      refundedAmount: moneyNumber(totalRefund),
+      refundedPlayers: refundByUser.size,
+    };
+  });
+}
+
 export async function settleDueMarkets(now = new Date()) {
-  if (!env.rapidApiKey) {
-    throw new ApiError(
-      503,
-      'Market result API key is not configured',
-      'RESULT_API_NOT_CONFIGURED',
-    );
+  const markets = await prisma.market.findMany();
+  if (markets.length === 0) {
+    return { settled: [], canceled: [], skipped: [] };
   }
 
-  const markets = await prisma.market.findMany();
-  const dueBySchedule = markets.filter((market) => isResultDue(market, now));
+  const currentRoundEntries = await prisma.marketEntry.findMany({
+    where: {
+      OR: markets.map((market) => ({
+        marketId: market.id,
+        roundNumber: market.currentRound,
+      })),
+    },
+    orderBy: { createdAt: 'asc' },
+    select: { marketId: true, roundNumber: true, createdAt: true },
+  });
+  const firstEntryByRound = new Map();
+  for (const entry of currentRoundEntries) {
+    const key = `${entry.marketId}:${entry.roundNumber}`;
+    if (!firstEntryByRound.has(key)) {
+      firstEntryByRound.set(key, entry);
+    }
+  }
+
+  const dueBySchedule = markets
+    .map((market) => {
+      const firstEntry = firstEntryByRound.get(
+        `${market.id}:${market.currentRound}`,
+      );
+      if (!firstEntry || !isResultDue(market, now, firstEntry.createdAt)) {
+        return null;
+      }
+
+      return {
+        ...market,
+        closeAt: sessionCloseForEntry(
+          market.openTime,
+          market.closeTime,
+          firstEntry.createdAt,
+        ),
+      };
+    })
+    .filter(Boolean);
 
   if (dueBySchedule.length === 0) {
-    return { settled: [], skipped: [] };
+    return { settled: [], canceled: [], skipped: [] };
   }
 
   const dueIds = dueBySchedule.map((market) => market.id);
@@ -637,6 +882,7 @@ export async function settleDueMarkets(now = new Date()) {
       marketId: true,
       roundNumber: true,
       result: true,
+      status: true,
     },
   });
   const settledTodayByMarket = new Map(
@@ -652,6 +898,7 @@ export async function settleDueMarkets(now = new Date()) {
         reason: 'A result is already recorded for this market today',
         settledRound: round.roundNumber,
         result: round.result,
+        status: round.status,
       };
     });
   const dueMarkets = dueBySchedule.filter(
@@ -659,26 +906,57 @@ export async function settleDueMarkets(now = new Date()) {
   );
 
   if (dueMarkets.length === 0) {
-    return { settled: [], skipped };
+    return { settled: [], canceled: [], skipped };
   }
 
-  const quotes = await fetchMarketQuotes(dueMarkets.map((market) => market.symbol));
+  const canStillUseQuote = dueMarkets.filter(
+    (market) => indiaDateKey(now) === indiaDateKey(market.closeAt),
+  );
+  const staleMarkets = dueMarkets.filter(
+    (market) => indiaDateKey(now) !== indiaDateKey(market.closeAt),
+  );
+  let quotes = [];
+  let quoteFailure = null;
+  if (canStillUseQuote.length > 0) {
+    if (!env.rapidApiKey) {
+      quoteFailure = 'Market result API key is not configured';
+    } else {
+      try {
+        quotes = await fetchMarketQuotes(
+          canStillUseQuote.map((market) => market.symbol),
+        );
+      } catch (error) {
+        quoteFailure = error.message;
+        console.error('Market quote fetch failed; canceling overdue rounds', error);
+      }
+    }
+  }
   const quotesBySymbol = new Map(
     quotes.map((quote) => [String(quote.symbol ?? '').toUpperCase(), quote]),
   );
   const settled = [];
+  const canceled = [];
   const pendingNotifications = [];
 
   await Promise.all(
     dueMarkets.map(async (market) => {
+      const stale = staleMarkets.some((staleMarket) => staleMarket.id === market.id);
       const quote = quotesBySymbol.get(market.symbol.toUpperCase());
-      if (!quote || quote.regularMarketPrice == null) {
-        console.error(`No regularMarketPrice for ${market.symbol}`);
-        skipped.push({
-          marketId: market.id,
-          symbol: market.symbol,
-          reason: 'No regularMarketPrice was returned by the quote provider',
-        });
+      if (stale || quoteFailure || !quote || quote.regularMarketPrice == null) {
+        const reason = stale
+          ? 'Result was not declared before the next market day'
+          : quoteFailure ??
+            'No regularMarketPrice was returned by the quote provider';
+        const outcome = await cancelMarketRound(market, market.closeAt);
+        if (outcome) {
+          canceled.push({ ...outcome, reason });
+        } else {
+          skipped.push({
+            marketId: market.id,
+            symbol: market.symbol,
+            reason: 'Round was already handled',
+          });
+        }
         return;
       }
 
@@ -686,12 +964,7 @@ export async function settleDueMarkets(now = new Date()) {
       let outcome;
       try {
         outcome = await declareMarketResult(market.id, result, {
-          closeAt: sessionClose(
-            market.openTime,
-            market.closeTime,
-            now,
-            market.lastSettledClose,
-          ),
+          closeAt: market.closeAt,
           price: quote.regularMarketPrice,
           notify: false,
         });
@@ -736,17 +1009,13 @@ export async function settleDueMarkets(now = new Date()) {
     );
   }
 
-  return { settled, skipped };
-}
-
-function shareAmount(groups, role) {
-  const match = groups.find((group) => group.role === role);
-  return moneyNumber(match?._sum.amount);
+  return { settled, canceled, skipped };
 }
 
 export async function listResultHistory(from, to, { page, pageSize }) {
   const roundsWithExtra = await prisma.marketRound.findMany({
     where: {
+      status: 'settled',
       settledAt: {
         gte: from,
         lt: to,
@@ -780,21 +1049,24 @@ export async function listResultHistory(from, to, { page, pageSize }) {
 }
 
 export async function getBettingOverview() {
-  const [markets, commissionGroups] = await Promise.all([
+  const [markets, accounts] = await Promise.all([
     listMarketsWithTotals(),
-    prisma.commissionEntry.groupBy({
-      by: ['role'],
-      _sum: { amount: true },
+    prisma.adminAccount.findMany({
+      select: { role: true, commissionBalance: true },
     }),
   ]);
 
-  const adminShare = shareAmount(commissionGroups, 'admin');
-  const subadminShare = shareAmount(commissionGroups, 'subadmin');
+  const adminShare = moneyNumber(
+    accounts.find((account) => account.role === 'admin')?.commissionBalance,
+  );
+  const subadminShare = moneyNumber(
+    accounts.find((account) => account.role === 'subadmin')?.commissionBalance,
+  );
 
   return {
     commissionPercent: env.commissionPercent,
     current: {
-      joinedUsers: markets.reduce((sum, market) => sum + market.participants, 0),
+      totalBets: markets.reduce((sum, market) => sum + market.participants, 0),
       totalBetAmount: moneyNumber(
         markets.reduce((sum, market) => sum + market.totalBetAmount, 0),
       ),

@@ -8,6 +8,7 @@ import Recharge from './pages/Recharge'
 import Withdrawals from './pages/Withdrawals'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
+import AdminOnlyRoute from './routes/AdminOnlyRoute'
 import ProtectedRoute from './routes/ProtectedRoute'
 import PublicRoute from './routes/PublicRoute'
 
@@ -23,11 +24,13 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardLayout />}>
               <Route index element={<Dashboard />} />
-              <Route path="markets" element={<Markets />} />
-              <Route path="users" element={<Users />} />
-              <Route path="recharge" element={<Recharge />} />
-              <Route path="withdrawals" element={<Withdrawals />} />
               <Route path="settings" element={<Settings />} />
+              <Route element={<AdminOnlyRoute />}>
+                <Route path="markets" element={<Markets />} />
+                <Route path="users" element={<Users />} />
+                <Route path="recharge" element={<Recharge />} />
+                <Route path="withdrawals" element={<Withdrawals />} />
+              </Route>
             </Route>
           </Route>
 

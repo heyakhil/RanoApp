@@ -25,15 +25,16 @@ import { useAuth } from '../context/AuthContext'
 
 const navItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
-  { to: '/dashboard/markets', label: 'Markets', icon: CandlestickChart },
-  { to: '/dashboard/users', label: 'Users', icon: Users },
-  { to: '/dashboard/recharge', label: 'Recharge', icon: Wallet },
-  { to: '/dashboard/withdrawals', label: 'Withdraw', icon: ArrowDownToLine },
+  { to: '/dashboard/markets', label: 'Markets', icon: CandlestickChart, adminOnly: true },
+  { to: '/dashboard/users', label: 'Users', icon: Users, adminOnly: true },
+  { to: '/dashboard/recharge', label: 'Recharge', icon: Wallet, adminOnly: true },
+  { to: '/dashboard/withdrawals', label: 'Withdraw', icon: ArrowDownToLine, adminOnly: true },
   { to: '/dashboard/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function DashboardLayout() {
-  const { user, logout } = useAuth()
+  const { user, isSubadmin, logout } = useAuth()
+  const visibleNavItems = isSubadmin ? navItems.filter((item) => !item.adminOnly) : navItems
   const navigate = useNavigate()
   const location = useLocation()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -90,7 +91,7 @@ export default function DashboardLayout() {
         >
           <SidebarItems>
             <SidebarItemGroup>
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const Icon = item.icon
 
                 return (

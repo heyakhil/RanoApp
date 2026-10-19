@@ -152,7 +152,7 @@ export default function Markets() {
       return
     }
     if (!Number.isInteger(payload.maxParticipants) || payload.maxParticipants < 1) {
-      setFormError('Total participants must be a whole number greater than zero.')
+      setFormError('Maximum bets must be a whole number greater than zero.')
       return
     }
     if (!Number.isFinite(payload.entryAmount) || payload.entryAmount < 0) {
@@ -286,14 +286,14 @@ export default function Markets() {
                     </p>
                     <p className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-gray-400" />
-                      Up to {market.maxParticipants} participants
+                      Up to {market.maxParticipants} bets
                     </p>
                     <p>
                       Entry amount:{' '}
                       <span className="font-medium text-gray-900">₹{market.entryAmount}</span>
                     </p>
                     <p>
-                      Joined:{' '}
+                      Bets placed:{' '}
                       <span className="font-medium text-gray-900">
                         {market.participants} / {market.maxParticipants}
                       </span>
@@ -349,8 +349,7 @@ export default function Markets() {
               Declare result for {resultMarket.name}
             </h2>
             <p className="mt-1 text-sm text-gray-500">
-              This settles round {resultMarket.currentRound}, records the commission split, and
-              starts a new round with no participants.
+              This settles round {resultMarket.currentRound} and starts a new round with no bets.
             </p>
             <form className="mt-5 space-y-4" onSubmit={declareResult}>
               <div>
@@ -461,7 +460,7 @@ export default function Markets() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="market-max-participants">Total users who can participate</Label>
+                  <Label htmlFor="market-max-participants">Maximum bets per round</Label>
                   <TextInput
                     className={fieldClassName}
                     id="market-max-participants"

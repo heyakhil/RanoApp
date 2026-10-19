@@ -47,15 +47,21 @@ export function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
+  // Sessions saved before accountRole existed only carry the display role.
+  const isSubadmin = user?.accountRole
+    ? user.accountRole === 'subadmin'
+    : user?.role === 'Subadministrator'
+
   const value = useMemo(
     () => ({
       user,
+      isSubadmin,
       isAuthenticated: Boolean(user),
       isLoading,
       login,
       logout,
     }),
-    [user, isLoading, login, logout],
+    [user, isSubadmin, isLoading, login, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

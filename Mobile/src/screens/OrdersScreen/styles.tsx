@@ -112,6 +112,12 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 2,
   },
+  canceledResult: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
   pending: {
     color: colors.navy,
     fontSize: 11,

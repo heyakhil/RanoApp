@@ -50,7 +50,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [now, setNow] = useState(() => new Date());
-
+console.log("Markets", markets);
   const loadMarkets = useCallback(async () => {
     setIsLoading(true);
     setLoadError('');
@@ -87,6 +87,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
   const openCount = displayMarkets.filter(
     market => market.status === 'open',
   ).length;
+  console.log("Now ===>", now);
   const featured = getFeaturedMarket(displayMarkets, now);
   const remainingMarkets = displayMarkets.filter(
     market => market.id !== featured?.id,
@@ -190,7 +191,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
   const joinLabel = !activeMarket
     ? 'Join market'
     : hasJoined
-      ? 'Joined this round'
+      ? 'Already bet this round'
       : activeMarket.status === 'upcoming'
         ? 'Market has not opened'
         : activeMarket.status === 'closed'
@@ -199,7 +200,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
             ? 'Market is full'
             : !canAfford
               ? 'Insufficient wallet balance'
-              : `Join for ₹${activeMarket.entryAmount}`;
+              : `Place bet for ₹${activeMarket.entryAmount}`;
 
   return (
     <ScreenLayout showHeader={false}>
@@ -414,7 +415,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
                 </View>
                 <View style={styles.factRow}>
                   <Text variant="bodySmall" style={styles.factLabel}>
-                    Participants
+                    Bets placed
                   </Text>
                   <Text variant="labelMedium" style={styles.factValue}>
                     {activeMarket.participants} / {activeMarket.capacity}

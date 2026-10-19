@@ -16,12 +16,10 @@ export interface ApiMarket {
   totalBetAmount: number;
   currentRound: number;
   lastResult: string | null;
-  lastResultAt?: string | null;
 }
 
 export interface Market extends ApiMarket {
   status: MarketStatus;
-  resultDeclared: boolean;
   capacity: number;
   schedule: string;
   mark: string;
@@ -61,31 +59,6 @@ function formatTime(time: string): string {
   return `${displayHours}:${String(minutes).padStart(2, '0')} ${period}`;
 }
 
-function hasResultClosedMarket(
-  openTime: string,
-  lastResultAt: string | null | undefined,
-  now: Date,
-): boolean {
-  if (!lastResultAt) return false;
-
-  const declaredAt = new Date(lastResultAt);
-  if (
-    Number.isNaN(declaredAt.getTime()) ||
-    now.getTime() < declaredAt.getTime()
-  ) {
-    return false;
-  }
-
-  const [openHours, openMinutes] = openTime.split(':').map(Number);
-  const nextOpen = new Date(declaredAt);
-  nextOpen.setHours(openHours, openMinutes, 0, 0);
-  if (nextOpen.getTime() <= declaredAt.getTime()) {
-    nextOpen.setDate(nextOpen.getDate() + 1);
-  }
-
-  return now.getTime() < nextOpen.getTime();
-}
-
 export async function fetchMarkets(): Promise<ApiMarket[]> {
   const response = await apiClient.getPublic<ApiMarket[]>('/markets');
 
@@ -94,6 +67,18 @@ export async function fetchMarkets(): Promise<ApiMarket[]> {
   }
 
   return response.data;
+}
+
+export async function fetchJoinedMarketIds(): Promise<string[]> {
+  const response = await apiClient.get<{ marketIds: string[] }>(
+    '/markets/participation',
+  );
+
+  if (!response.success || !response.data) {
+    throw new Error(response.message || 'Unable to load your markets.');
+  }
+
+  return response.data.marketIds;
 }
 
 export interface UserOrder {
@@ -111,8 +96,10 @@ export interface UserOrder {
   openTime: string;
   closeTime: string;
   result: string | null;
+  roundStatus: 'pending' | 'settled' | 'canceled';
   isCurrentRound: boolean;
   createdAt: string;
+  scheduledResultAt: string;
 }
 
 export interface ResultRound {
@@ -166,18 +153,6 @@ export async function fetchMyOrders(
   return response.data;
 }
 
-export async function fetchJoinedMarketIds(): Promise<string[]> {
-  const response = await apiClient.get<{ marketIds: string[] }>(
-    '/markets/participation',
-  );
-
-  if (!response.success || !response.data) {
-    throw new Error(response.message || 'Unable to load your markets.');
-  }
-
-  return response.data.marketIds;
-}
-
 export async function joinMarket(
   marketId: string,
   number: number,
@@ -197,25 +172,15 @@ export async function joinMarket(
 function getMarketStatus(
   openTime: string,
   closeTime: string,
-  currentTime: string,
-  lastResultAt: string | null | undefined,
   now: Date,
 ): MarketStatus {
-  if (hasResultClosedMarket(openTime, lastResultAt, now)) {
-    return 'closed';
-  }
-
+  const currentTime = currentTimeString(now);
   const crossesMidnight = closeTime < openTime;
+  const isOpen = crossesMidnight
+    ? currentTime >= openTime || currentTime < closeTime
+    : currentTime >= openTime && currentTime < closeTime;
 
-  if (crossesMidnight) {
-    return currentTime >= openTime || currentTime < closeTime
-      ? 'open'
-      : 'upcoming';
-  }
-
-  if (currentTime < openTime) return 'upcoming';
-  if (currentTime < closeTime) return 'open';
-  return 'closed';
+  return isOpen ? 'open' : currentTime < openTime ? 'upcoming' : 'closed';
 }
 
 export function toDisplayMarket(
@@ -224,24 +189,17 @@ export function toDisplayMarket(
   now: Date,
   joined: boolean,
 ): Market {
-  const currentTime = currentTimeString(now);
   const status = getMarketStatus(
     market.openTime,
     market.closeTime,
-    currentTime,
-    market.lastResultAt,
     now,
   );
-  const accent = marketAccents[index % marketAccents.length];
 
+  console.log("Market Status ===>", status);
+  const accent = marketAccents[index % marketAccents.length];
   return {
     ...market,
     status,
-    resultDeclared: hasResultClosedMarket(
-      market.openTime,
-      market.lastResultAt,
-      now,
-    ),
     joined,
     capacity: market.maxParticipants,
     schedule: `${formatTime(market.openTime)} – ${formatTime(
@@ -275,7 +233,7 @@ export function getFeaturedMarket(
 
   return {
     ...firstTomorrow,
-    status: firstTomorrow.resultDeclared ? 'closed' : 'upcoming',
+    status: 'upcoming',
     schedule: `Tomorrow · ${formatTime(firstTomorrow.openTime)}`,
   };
 }

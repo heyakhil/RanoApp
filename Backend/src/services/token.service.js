@@ -7,7 +7,7 @@ import { ApiError } from '../utils/ApiError.js';
  * @property {string} sub - User id
  * @property {string} email
  * @property {string} firebaseUid
- * @property {'admin'} [role]
+ * @property {'admin' | 'subadmin'} [role]
  */
 
 /**
@@ -29,17 +29,17 @@ export function issueAccessToken(user) {
 }
 
 /**
- * Issues an access JWT for a configured admin account.
- * @param {string} username
+ * Issues an access JWT for an admin account.
+ * @param {{ id: string, username: string, role: 'admin' | 'subadmin' }} account
  * @returns {string}
  */
-export function issueAdminAccessToken(username) {
+export function issueAdminAccessToken(account) {
   /** @type {AccessTokenPayload} */
   const payload = {
-    sub: `admin:${username}`,
-    email: username,
+    sub: `admin:${account.id}`,
+    email: account.username,
     firebaseUid: '',
-    role: 'admin',
+    role: account.role,
   };
 
   return jwt.sign(payload, env.jwtSecret, {

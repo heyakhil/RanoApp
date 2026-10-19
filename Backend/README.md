@@ -21,6 +21,7 @@ cp .env.example .env
 # Place Firebase service account JSON at the path in FIREBASE_SERVICE_ACCOUNT_PATH
 npm install
 npm run prisma:migrate
+npm run prisma:seed
 npm run dev
 ```
 
@@ -57,6 +58,7 @@ npm run dev
 | GET | `/api/v1/markets` | — | List markets |
 | GET | `/api/v1/markets/orders?page=1&pageSize=20` | User JWT | Paginated user orders |
 | GET | `/api/v1/markets/history?from=...&to=...&page=1&pageSize=20` | User JWT | Paginated result history |
+| POST | `/api/v1/markets/results/settle` | `X-Cron-Secret` | Settle due market rounds or cancel and refund overdue rounds |
 | GET | `/api/v1/markets/:id` | — | Get a market |
 | GET | `/api/v1/transactions?page=1&pageSize=20` | User JWT | Paginated wallet transaction history |
 | POST | `/api/v1/markets` | JWT | Create a market (maximum five) |
@@ -67,14 +69,36 @@ npm run dev
 Paginated endpoints return `items` plus `pagination` metadata (`page`,
 `pageSize`, and `hasMore`). Page sizes default to 20 and are capped at 100.
 
-Configure `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `Backend/.env` for admin
-panel sign-in. Both values must be set. Admin access tokens last seven days by
-default; set `ADMIN_JWT_EXPIRES_IN_SECONDS` to change that duration. Mobile
-access tokens retain their separate 15-minute lifetime and refresh flow. Use a
-strong password and do not commit the `.env` file. Market create, update, and
-delete endpoints require an admin JWT issued by `POST /api/v1/admin/login`;
-mobile user tokens cannot modify markets. Market times use 24-hour `HH:mm`
-values and are interpreted in the mobile device's local time.
+Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SUBADMIN_USERNAME`, and
+`SUBADMIN_PASSWORD` in `Backend/.env`, then run `npm run prisma:seed` after
+migrations. This creates or updates both database accounts; passwords are
+stored as scrypt hashes, not readable text. Run the seed command again to
+change either password. Admin access tokens last seven days by default; set
+`ADMIN_JWT_EXPIRES_IN_SECONDS` to change that duration. Mobile access tokens
+retain their separate 15-minute lifetime and refresh flow. Use strong
+passwords and do not commit the `.env` file. Admin and subadmin accounts can
+sign in to the admin panel.
+
+`COMMISSION_PERCENT` (10% by default) is calculated separately for every bet
+and split evenly between the admin and subadmin app balances when the bet is
+placed. For example, a ₹100 bet credits ₹5 to each account. The full bet
+amount remains the bet and payout amount. Each bet and its two commission
+entries are recorded in the same database transaction as the bet. These are
+in-app balances; no bank or UPI transfer is made automatically.
+
+Each bet uses one market capacity slot. A user can bet once in each market
+round and can also bet in other markets during that day. The backend enforces
+this limit even if a request bypasses the mobile app; existing bet records are
+kept when the participation guard is added.
+
+Market create, update, and delete endpoints require an admin JWT issued by
+`POST /api/v1/admin/login`; mobile user tokens cannot modify markets. Market
+times use 24-hour `HH:mm` values in Asia/Kolkata time. Configure an external
+cron to call `POST /api/v1/markets/results/settle` with the `X-Cron-Secret`
+header. After the configured `RESULT_DELAY_MINUTES` window, a round is settled
+if a result quote is available; otherwise it is canceled, each player's bet is
+refunded, and its commission is reversed. A missed round from an earlier
+market day is canceled and refunded rather than settled with a newer quote.
 
 Withdrawal amounts are reserved from the user's wallet when a request is
 submitted. Rejecting a request returns the reserved amount to the wallet;

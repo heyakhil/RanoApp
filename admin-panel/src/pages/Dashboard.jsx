@@ -36,8 +36,8 @@ export default function Dashboard() {
   const stats = overview
     ? [
         {
-          label: 'Users joined',
-          value: String(overview.current.joinedUsers),
+          label: 'Bets placed',
+          value: String(overview.current.totalBets),
           detail: 'Current open rounds',
           icon: Users,
           tone: 'bg-indigo-50 text-indigo-600',
@@ -52,7 +52,7 @@ export default function Dashboard() {
         {
           label: 'Commission collected',
           value: formatRupees(overview.commission.total),
-          detail: `${overview.commissionPercent}% of settled pools`,
+          detail: `${overview.commissionPercent}% of each bet`,
           icon: Percent,
           tone: 'bg-amber-50 text-amber-600',
         },
@@ -123,8 +123,8 @@ export default function Dashboard() {
             <div className="mb-4">
               <h2 className="text-lg font-semibold text-gray-900">Markets</h2>
               <p className="text-sm text-gray-500">
-                Commission is {overview.commissionPercent}% of the pool when a result is declared,
-                split equally between admin and subadmin.
+                Commission is credited on every bet, then split equally between the
+                admin and subadmin balances.
               </p>
             </div>
 
@@ -135,7 +135,7 @@ export default function Dashboard() {
                     <tr>
                       <th className="px-2 py-3 font-medium">Market</th>
                       <th className="px-2 py-3 font-medium">Round</th>
-                      <th className="px-2 py-3 font-medium">Users joined</th>
+                      <th className="px-2 py-3 font-medium">Bets placed</th>
                       <th className="px-2 py-3 font-medium">Total bet</th>
                       <th className="px-2 py-3 font-medium">Last result</th>
                     </tr>

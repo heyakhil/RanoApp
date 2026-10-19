@@ -26,6 +26,16 @@ enum WithdrawalStatus {
   rejected
 }
 
+enum AdminRole {
+  admin
+  subadmin
+}
+
+enum MarketRoundStatus {
+  settled
+  canceled
+}
+
 model User {
   id                String              @id @default(cuid())
   firebaseUid       String              @unique @map("firebase_uid") @db.VarChar(128)
@@ -45,6 +55,7 @@ model User {
   withdrawals       WithdrawalRequest[]
   deviceTokens      DeviceToken[]
   marketEntries     MarketEntry[]
+  marketParticipations MarketParticipation[]
 
   @@index([email])
   @@index([isProfileComplete])
@@ -124,6 +135,7 @@ model Market {
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
   entries         MarketEntry[]
+  participations  MarketParticipation[]
   rounds          MarketRound[]
   commissions     CommissionEntry[]
 
@@ -142,22 +154,35 @@ model MarketEntry {
   createdAt    DateTime @default(now()) @map("created_at")
   market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commissionEntries CommissionEntry[]
+
+  @@index([marketId, roundNumber, userId])
+  @@index([userId])
+  @@map("market_entries")
+}
+
+model MarketParticipation {
+  id          String   @id @default(cuid())
+  marketId    String   @map("market_id")
+  roundNumber Int      @map("round_number")
+  userId      String   @map("user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([marketId, roundNumber, userId])
   @@index([userId])
-  @@map("market_entries")
+  @@map("market_participations")
 }
 
 model MarketRound {
   id               String   @id @default(cuid())
   marketId         String   @map("market_id")
   roundNumber      Int      @map("round_number")
-  result           String   @db.VarChar(120)
+  result           String?  @db.VarChar(120)
+  status           MarketRoundStatus @default(settled)
   participantCount Int      @map("participant_count")
   totalBetAmount   Decimal  @map("total_bet_amount") @db.Decimal(12, 2)
-  commissionAmount Decimal  @map("commission_amount") @db.Decimal(12, 2)
-  adminShare       Decimal  @map("admin_share") @db.Decimal(12, 2)
-  subadminShare    Decimal  @map("subadmin_share") @db.Decimal(12, 2)
   settledAt        DateTime @default(now()) @map("settled_at")
   settledOn        DateTime @map("settled_on") @db.Date
   market           Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
@@ -166,6 +191,20 @@ model MarketRound {
   @@unique([marketId, settledOn])
   @@index([settledAt])
   @@map("market_rounds")
+}
+
+model AdminAccount {
+  id               String             @id @default(cuid())
+  username         String             @unique @db.VarChar(120)
+  passwordHash     String             @map("password_hash") @db.VarChar(255)
+  role             AdminRole          @unique
+  commissionBalance Decimal           @default(0) @map("commission_balance") @db.Decimal(12, 2)
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  commissionEntries CommissionEntry[]
+
+  @@index([role])
+  @@map("admin_accounts")
 }
 
 model PaymentDestination {
@@ -181,12 +220,18 @@ model CommissionEntry {
   id          String   @id @default(cuid())
   marketId    String   @map("market_id")
   roundNumber Int      @map("round_number")
-  role        String   @db.VarChar(20)
+  role        AdminRole
+  accountId   String?  @map("account_id")
+  marketEntryId String? @map("market_entry_id")
   amount      Decimal  @db.Decimal(12, 2)
   createdAt   DateTime @default(now()) @map("created_at")
   market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  account     AdminAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  marketEntry MarketEntry? @relation(fields: [marketEntryId], references: [id], onDelete: SetNull)
 
   @@index([role])
   @@index([marketId, roundNumber])
+  @@index([accountId])
+  @@index([marketEntryId])
   @@map("commission_entries")
 }

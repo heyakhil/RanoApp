@@ -60,6 +60,6 @@ export const styles = StyleSheet.create({
   spots: { color: colors.textSecondary },
   entryRow: { flexDirection: 'row', alignItems: 'center' },
   entryLabel: { color: colors.textSecondary, marginRight: 6 },
-  entryValue: { color: colors.text, fontWeight: '800', marginRight: 2 },
   joined: { color: colors.secondary, fontWeight: '700', marginRight: 6 },
+  entryValue: { color: colors.text, fontWeight: '800', marginRight: 2 },
 });

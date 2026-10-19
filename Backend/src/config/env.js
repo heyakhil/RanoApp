@@ -14,8 +14,6 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
  * @property {string} jwtExpiresIn
  * @property {number} adminJwtExpiresInSeconds
  * @property {string} firebaseServiceAccountPath
- * @property {string | undefined} adminUsername
- * @property {string | undefined} adminPassword
  * @property {string[]} corsOrigins
  * @property {{ cloudName: string, apiKey: string, apiSecret: string }} cloudinary
  * @property {number} commissionPercent
@@ -33,8 +31,6 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 function loadEnv() {
   const jwtSecret = process.env.JWT_SECRET;
   const databaseUrl = process.env.DATABASE_URL;
-  const adminUsername = process.env.ADMIN_USERNAME;
-  const adminPassword = process.env.ADMIN_PASSWORD;
   const adminJwtExpiresInSeconds = Number(
     process.env.ADMIN_JWT_EXPIRES_IN_SECONDS || 7 * 24 * 60 * 60,
   );
@@ -45,10 +41,6 @@ function loadEnv() {
 
   if (!databaseUrl) {
     throw new Error('DATABASE_URL is required in environment variables');
-  }
-
-  if (Boolean(adminUsername) !== Boolean(adminPassword)) {
-    throw new Error('ADMIN_USERNAME and ADMIN_PASSWORD must both be configured');
   }
 
   if (!Number.isSafeInteger(adminJwtExpiresInSeconds) || adminJwtExpiresInSeconds <= 0) {
@@ -79,8 +71,6 @@ function loadEnv() {
     firebaseServiceAccountPath:
       process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
       './firebase-service-account.json',
-    adminUsername,
-    adminPassword,
     corsOrigins: (process.env.CORS_ORIGINS || '')
       .split(',')
       .map((origin) => origin.trim())

@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Card, Label, Spinner, TextInput } from 'flowbite-react'
+import { changeAdminPassword } from '../api/admin'
 import { getPaymentDestination, savePaymentDestination } from '../api/settings'
+import { useAuth } from '../context/AuthContext'
 
-export default function Settings() {
+const MIN_PASSWORD_LENGTH = 8
+
+function PaymentDestinationSettings() {
   const [upiId, setUpiId] = useState('')
   const [qrImageUrl, setQrImageUrl] = useState('')
   const [qrFile, setQrFile] = useState(null)
@@ -64,9 +68,9 @@ export default function Settings() {
   const shownQr = previewUrl || qrImageUrl
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <section className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
+        <h2 className="text-lg font-semibold text-gray-900">Payment details</h2>
         <p className="mt-1 text-sm text-gray-500">
           Set the UPI ID and QR code users see when they send a recharge.
         </p>
@@ -126,6 +130,130 @@ export default function Settings() {
           </form>
         </Card>
       )}
+    </section>
+  )
+}
+
+function ChangePasswordSettings() {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState('')
+
+  const save = async (event) => {
+    event.preventDefault()
+    setSaved('')
+    setError('')
+
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      setError(`New password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setError('New password and confirmation do not match.')
+      return
+    }
+    if (newPassword === currentPassword) {
+      setError('New password must be different from the current password.')
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      await changeAdminPassword(currentPassword, newPassword)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setSaved('Password changed. Use the new password the next time you sign in.')
+    } catch (saveError) {
+      setError(saveError.message || 'Unable to change password.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">Change password</h2>
+        <p className="mt-1 text-sm text-gray-500">Update the password you use to sign in to this panel.</p>
+      </div>
+
+      {error ? (
+        <Alert color="failure" onDismiss={() => setError('')}>
+          {error}
+        </Alert>
+      ) : null}
+      {saved ? (
+        <Alert color="success" onDismiss={() => setSaved('')}>
+          {saved}
+        </Alert>
+      ) : null}
+
+      <Card className="border border-gray-100 shadow-sm">
+        <form className="space-y-5" onSubmit={save}>
+          <div>
+            <Label htmlFor="current-password">Current password</Label>
+            <TextInput
+              id="current-password"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <Label htmlFor="new-password">New password</Label>
+            <TextInput
+              id="new-password"
+              type="password"
+              autoComplete="new-password"
+              minLength={MIN_PASSWORD_LENGTH}
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              required
+            />
+            <p className="mt-2 text-xs text-gray-500">At least {MIN_PASSWORD_LENGTH} characters.</p>
+          </div>
+          <div>
+            <Label htmlFor="confirm-password">Confirm new password</Label>
+            <TextInput
+              id="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button type="submit" color="blue" disabled={isSaving}>
+              {isSaving ? 'Updating...' : 'Change password'}
+            </Button>
+          </div>
+        </form>
+      </Card>
+    </section>
+  )
+}
+
+export default function Settings() {
+  const { isSubadmin } = useAuth()
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          {isSubadmin ? 'Manage your account.' : 'Manage payment details and your account.'}
+        </p>
+      </div>
+
+      {isSubadmin ? null : <PaymentDestinationSettings />}
+      <ChangePasswordSettings />
     </div>
   )
 }

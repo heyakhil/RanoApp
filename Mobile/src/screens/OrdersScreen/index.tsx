@@ -13,8 +13,6 @@ interface OrdersScreenProps {
   onBack?: () => void;
 }
 
-const RESULT_DELAY_MS = 15 * 60 * 1000;
-
 const accents = [
   { color: '#2457CF', background: '#E9F0FF' },
   { color: '#3D8B46', background: '#E7F6E9' },
@@ -31,27 +29,6 @@ function accentFor(symbol: string): { color: string; background: string } {
   return accents[index % accents.length];
 }
 
-function toMinutes(time: string): number {
-  const [hours, minutes] = time.split(':').map(Number);
-  return hours * 60 + minutes;
-}
-
-function closeMoment(openTime: string, closeTime: string, now: Date): Date {
-  const [closeHour, closeMinute] = closeTime.split(':').map(Number);
-  const close = new Date(now);
-  close.setHours(closeHour, closeMinute, 0, 0);
-
-  const current = now.getHours() * 60 + now.getMinutes();
-  if (
-    toMinutes(closeTime) < toMinutes(openTime) &&
-    current >= toMinutes(openTime)
-  ) {
-    close.setDate(close.getDate() + 1);
-  }
-
-  return close;
-}
-
 function formatClock(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -62,28 +39,22 @@ function formatClock(totalSeconds: number): string {
     .join(':');
 }
 
-function resultMoment(openTime: string, closeTime: string, now: Date): Date {
-  return new Date(
-    closeMoment(openTime, closeTime, now).getTime() + RESULT_DELAY_MS,
-  );
+function resultMoment(order: UserOrder): Date {
+  return new Date(order.scheduledResultAt);
 }
 
-function formatResultTime(
-  openTime: string,
-  closeTime: string,
-  now: Date,
-): string {
+function formatResultTime(order: UserOrder): string {
   return new Intl.DateTimeFormat('en-IN', {
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
     minute: '2-digit',
-  }).format(resultMoment(openTime, closeTime, now));
+  }).format(resultMoment(order));
 }
 
 function OrderStatusBar({ order }: { order: UserOrder }) {
   const [now, setNow] = useState(() => new Date());
-  const pending = !order.result && order.isCurrentRound;
+  const pending = order.roundStatus === 'pending';
 
   useEffect(() => {
     if (!pending) {
@@ -129,6 +100,14 @@ function timeLeft(
   order: UserOrder,
   now: Date,
 ): { label: string; value: string; tone: 'won' | 'lost' | 'waiting' | 'countdown' } {
+  if (order.roundStatus === 'canceled') {
+    return {
+      label: 'Round canceled',
+      value: `₹${order.entryAmount} refunded`,
+      tone: 'waiting',
+    };
+  }
+
   if (order.result) {
     if (order.payoutAmount != null && order.payoutAmount > 0) {
       return {
@@ -146,10 +125,13 @@ function timeLeft(
   }
 
   const remainingMs =
-    resultMoment(order.openTime, order.closeTime, now).getTime() -
-    now.getTime();
+    resultMoment(order).getTime() - now.getTime();
   if (remainingMs <= 0) {
-    return { label: 'Time left', value: 'Awaiting result', tone: 'waiting' };
+    return {
+      label: 'Round status',
+      value: 'Cancellation pending',
+      tone: 'waiting',
+    };
   }
 
   return {
@@ -295,11 +277,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         }
         renderItem={({ item: order }) => {
           const accent = accentFor(order.symbol);
-          const resultTime = formatResultTime(
-            order.openTime,
-            order.closeTime,
-            new Date(),
-          );
+          const resultTime = formatResultTime(order);
 
           return (
             <View key={order.id} style={styles.card}>
@@ -347,7 +325,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                   </Text>
                 </View>
                 <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Participants</Text>
+                  <Text style={styles.statLabel}>Bets placed</Text>
                   <Text style={styles.statValue}>
                     {order.participants.toLocaleString('en-US')}
                   </Text>
@@ -360,7 +338,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                 </View>
                 <View style={styles.stat}>
                   <Text style={styles.statLabel}>Result</Text>
-                  {order.result ? (
+                  {order.roundStatus === 'canceled' ? (
+                    <Text style={styles.canceledResult}>Canceled</Text>
+                  ) : order.result ? (
                     <Text style={styles.resultValue} numberOfLines={1}>
                       {order.result}
                     </Text>

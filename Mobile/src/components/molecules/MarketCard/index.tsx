@@ -36,13 +36,13 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onPress }) => {
       : 0;
   const remaining = Math.max(0, market.capacity - market.participants);
   const state = status[market.status];
-
+  
   return (
     <Card
       mode="outlined"
       style={styles.card}
       onPress={onPress}
-      accessibilityLabel={`View ${market.symbol} market, ${market.participants} of ${market.capacity} participants, ₹${market.entryAmount} entry`}
+      accessibilityLabel={`View ${market.symbol} market, ${market.participants} of ${market.capacity} bets, ₹${market.entryAmount} entry`}
     >
       <Card.Content style={styles.content}>
         <View style={styles.topRow}>
@@ -91,7 +91,7 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onPress }) => {
         <View style={styles.divider} />
         <View style={styles.progressRow}>
           <Text variant="labelMedium" style={styles.progressLabel}>
-            Participants
+            Bets placed
           </Text>
           <Text variant="labelLarge" style={styles.progressCount}>
             {market.participants} / {market.capacity}
@@ -117,18 +117,20 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onPress }) => {
                 Joined
               </Text>
             ) : (
-              <Text variant="bodySmall" style={styles.entryLabel}>
-                Entry
-              </Text>
+              <>
+                <Text variant="bodySmall" style={styles.entryLabel}>
+                  Bet
+                </Text>
+                <Text variant="titleMedium" style={styles.entryValue}>
+                  ₹{market.entryAmount}
+                </Text>
+                <MaterialCommunityIcons
+                  name="chevron-right"
+                  size={21}
+                  color={colors.primary}
+                />
+              </>
             )}
-            {!market.joined && (<><Text variant="titleMedium" style={styles.entryValue}>
-              ₹{market.entryAmount}
-            </Text>
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={21}
-                color={colors.primary}
-              /></>)}
           </View>
         </View>
       </Card.Content>

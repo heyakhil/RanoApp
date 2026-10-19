@@ -61,7 +61,7 @@ export const listMyEntries = asyncHandler(async (req, res) => {
 
 export const joinMarket = asyncHandler(async (req, res) => {
   const entry = await betService.joinMarket(req.auth.userId, req.params.id, req.body.number);
-  return sendSuccess(res, 201, entry, 'Joined market');
+  return sendSuccess(res, 201, entry, 'Bet placed');
 });
 
 export const declareResult = asyncHandler(async (req, res) => {

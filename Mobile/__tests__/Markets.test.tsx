@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import { PaperProvider, Text } from 'react-native-paper';
+import { Button, PaperProvider, Text, TextInput } from 'react-native-paper';
 import { apiClient } from '../src/api/client';
 import { MarketCard } from '../src/components/molecules';
 import { HomeScreen } from '../src/screens/HomeScreen';
@@ -77,7 +77,7 @@ test('loads markets from the API and shows market details', async () => {
   expect(
     renderer.root.findByProps({
       accessibilityLabel:
-        'View NSTR market, 326 of 500 participants, ₹25 entry',
+        'View NSTR market, 326 of 500 bets, ₹25 entry',
     }),
   ).toBeTruthy();
   expect(JSON.stringify(renderer.toJSON())).toContain('174 places left');
@@ -109,7 +109,92 @@ test('features the next market and lists each API market only once', async () =>
 
   await ReactTestRenderer.act(() => cards[0].props.onPress());
   expect(JSON.stringify(renderer.toJSON())).toContain('Market details');
-  expect(JSON.stringify(renderer.toJSON())).toContain('Join for ₹25');
+  expect(JSON.stringify(renderer.toJSON())).toContain('Place bet for ₹25');
+  await ReactTestRenderer.act(() => renderer.unmount());
+});
+
+test('allows one bet per market and lets the user bet in another market', async () => {
+  (apiClient.post as jest.Mock).mockImplementation((path: string) => {
+    const marketId = path.split('/')[2];
+    const entryAmount = marketId === 'market-1' ? 25 : 50;
+    return Promise.resolve({
+      success: true,
+      data: {
+        marketId,
+        roundNumber: 1,
+        entryAmount,
+        pickedNumber: 12,
+        participants: 327,
+        maxParticipants: 500,
+        walletBalance: '75.00',
+      },
+    });
+  });
+
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(async () => {
+    renderer = renderHomeScreen();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+
+  const placeBet = async (marketId: string, entryAmount: number) => {
+    const marketCard = renderer.root
+      .findAllByType(MarketCard)
+      .find(card => card.props.market.id === marketId);
+    await ReactTestRenderer.act(() => marketCard?.props.onPress());
+
+    const openBetButton = renderer.root
+      .findAllByType(Button)
+      .find(button => button.props.children === `Place bet for ₹${entryAmount}`);
+    await ReactTestRenderer.act(() => openBetButton?.props.onPress());
+
+    const numberInput = renderer.root
+      .findAllByType(TextInput)
+      .find(input => input.props.label === 'Your number');
+    await ReactTestRenderer.act(() => numberInput?.props.onChangeText('12'));
+
+    const submitButton = renderer.root
+      .findAllByType(Button)
+      .find(button => button.props.children === 'Place bet');
+    await ReactTestRenderer.act(async () => {
+      submitButton?.props.onPress();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  };
+
+  await placeBet('market-1', 25);
+  expect(apiClient.post).toHaveBeenCalledTimes(1);
+
+  const alreadyBetCard = renderer.root
+    .findAllByType(MarketCard)
+    .find(card => card.props.market.id === 'market-1');
+  expect(alreadyBetCard?.props.market.joined).toBe(true);
+
+  const firstMarketCard = renderer.root
+    .findAllByType(MarketCard)
+    .find(card => card.props.market.id === 'market-1');
+  await ReactTestRenderer.act(() => firstMarketCard?.props.onPress());
+  expect(
+    renderer.root
+      .findAllByType(Button)
+      .some(button => button.props.children === 'Already bet this round'),
+  ).toBe(true);
+  await ReactTestRenderer.act(() =>
+    renderer.root.findByProps({ accessibilityLabel: 'Close market details' }).props.onPress(),
+  );
+
+  await placeBet('market-2', 50);
+  expect(apiClient.post).toHaveBeenCalledTimes(2);
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    1,
+    '/markets/market-1/join',
+    { number: 12 },
+  );
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    2,
+    '/markets/market-2/join',
+    { number: 12 },
+  );
   await ReactTestRenderer.act(() => renderer.unmount());
 });
 
@@ -140,7 +225,7 @@ test('selects the next opening market and rolls over to tomorrow after closing',
   });
 });
 
-test('closes a market after a result until its next scheduled opening', () => {
+test('market status follows its scheduled opening and closing times', () => {
   const market = {
     ...mockApiMarkets[0],
     openTime: '09:00',
@@ -154,8 +239,11 @@ test('closes a market after a result until its next scheduled opening', () => {
   ).toBe('closed');
   expect(
     toDisplayMarket(market, 0, new Date(2026, 0, 2, 8, 59), false).status,
-  ).toBe('closed');
+  ).toBe('upcoming');
   expect(
     toDisplayMarket(market, 0, new Date(2026, 0, 2, 9, 0), false).status,
+  ).toBe('open');
+  expect(
+    toDisplayMarket(market, 0, new Date(2026, 0, 2, 10, 0), false).status,
   ).toBe('open');
 });

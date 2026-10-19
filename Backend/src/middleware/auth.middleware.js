@@ -38,23 +38,31 @@ export const requireAuth = asyncHandler(async (req, _res, next) => {
   next();
 });
 
-export const requireAdmin = asyncHandler(async (req, _res, next) => {
-  const token = extractBearerToken(req);
-  const payload = verifyAccessToken(token);
+function requireAdminRoles(allowedRoles) {
+  return asyncHandler(async (req, _res, next) => {
+    const token = extractBearerToken(req);
+    const payload = verifyAccessToken(token);
 
-  if (payload.role !== 'admin') {
-    throw new ApiError(403, 'Admin access is required', 'ADMIN_REQUIRED');
-  }
+    if (!allowedRoles.includes(payload.role)) {
+      throw new ApiError(403, 'Admin access is required', 'ADMIN_REQUIRED');
+    }
 
-  req.auth = {
-    userId: payload.sub,
-    email: payload.email,
-    firebaseUid: payload.firebaseUid,
-    role: 'admin',
-  };
+    req.auth = {
+      userId: payload.sub,
+      email: payload.email,
+      firebaseUid: payload.firebaseUid,
+      role: payload.role,
+    };
 
-  next();
-});
+    next();
+  });
+}
+
+/** Full administrator only. */
+export const requireAdmin = requireAdminRoles(['admin']);
+
+/** Administrator or subadministrator (overview and own-account actions). */
+export const requireAdminOrSubadmin = requireAdminRoles(['admin', 'subadmin']);
 
 function equalSecret(first, second) {
   const firstHash = createHash('sha256').update(first).digest();
