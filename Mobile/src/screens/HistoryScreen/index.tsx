@@ -101,15 +101,16 @@ function groupByDay(rounds: ResultRound[]): ResultDay[] {
   const groups = new Map<string, ResultDay>();
 
   rounds.forEach(round => {
-    const settled = new Date(round.settledAt);
-    const key = `${settled.getFullYear()}-${settled.getMonth()}-${settled.getDate()}`;
+    // Group by session date: overnight markets settle after midnight.
+    const key = round.sessionOn;
     const day = groups.get(key) ?? {
       date: key,
       label: new Intl.DateTimeFormat('en-IN', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
-      }).format(settled),
+        timeZone: 'UTC',
+      }).format(new Date(`${key}T00:00:00.000Z`)),
       results: [],
     };
 

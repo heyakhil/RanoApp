@@ -185,11 +185,13 @@ model MarketRound {
   totalBetAmount   Decimal  @map("total_bet_amount") @db.Decimal(12, 2)
   settledAt        DateTime @default(now()) @map("settled_at")
   settledOn        DateTime @map("settled_on") @db.Date
+  sessionOn        DateTime @map("session_on") @db.Date
   market           Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
   @@unique([marketId, roundNumber])
   @@unique([marketId, settledOn])
   @@index([settledAt])
+  @@index([sessionOn])
   @@map("market_rounds")
 }
 

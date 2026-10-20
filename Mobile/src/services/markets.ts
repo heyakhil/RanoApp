@@ -109,6 +109,8 @@ export interface ResultRound {
   result: string;
   roundNumber: number;
   settledAt: string;
+  /** India date (YYYY-MM-DD) the market session opened. */
+  sessionOn: string;
 }
 
 const PAGE_SIZE = 20;

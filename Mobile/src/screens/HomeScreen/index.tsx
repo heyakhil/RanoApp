@@ -224,12 +224,6 @@ console.log("Markets", markets);
               </Text>
             </View>
             <View style={styles.rightHeader}>
-              <View style={styles.notificationIcon}>
-                <Icon source="bell-outline" color={colors.error} size={20} />
-                <Badge size={16} style={styles.notificationBadge}>
-                  3
-                </Badge>
-              </View>
               <Avatar.Text
                 size={36}
                 label="R"

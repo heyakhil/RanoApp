@@ -75,6 +75,16 @@ export function sessionCloseForEntry(openTime, closeTime, createdAt) {
   return new Date(`${dateKey}T${closeTime}:00+05:30`);
 }
 
+/** India date the session that closes at `closeAt` opened on. */
+function sessionDate(openTime, closeTime, closeAt) {
+  const closeDay = new Date(`${indiaDateKey(closeAt)}T00:00:00.000Z`);
+  if (toMinutes(closeTime) < toMinutes(openTime)) {
+    closeDay.setUTCDate(closeDay.getUTCDate() - 1);
+  }
+
+  return closeDay;
+}
+
 function settlementDate(now = new Date()) {
   const formatted = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
@@ -597,8 +607,18 @@ export async function declareMarketResult(marketId, result, options = {}) {
         userId: true,
         amount: true,
         pickedNumber: true,
+        createdAt: true,
       },
     });
+    const firstEntryAt = entries.reduce(
+      (first, entry) => (!first || entry.createdAt < first ? entry.createdAt : first),
+      null,
+    );
+    const sessionCloseAt =
+      closeAt ??
+      (firstEntryAt
+        ? sessionCloseForEntry(market.openTime, market.closeTime, firstEntryAt)
+        : sessionClose(market.openTime, market.closeTime, new Date(), market.lastSettledClose));
     let winnerCount = 0;
     let totalPayout = new Prisma.Decimal(0);
     let totalBetAmount = new Prisma.Decimal(0);
@@ -667,6 +687,7 @@ export async function declareMarketResult(marketId, result, options = {}) {
         participantCount,
         totalBetAmount,
         settledOn,
+        sessionOn: sessionDate(market.openTime, market.closeTime, sessionCloseAt),
       },
     });
 
@@ -804,6 +825,7 @@ async function cancelMarketRound(market, closeAt) {
         participantCount: entries.length,
         totalBetAmount: totalRefund,
         settledOn: settlementDate(closeAt),
+        sessionOn: sessionDate(market.openTime, market.closeTime, closeAt),
       },
     });
     await tx.market.update({
@@ -1016,15 +1038,16 @@ export async function listResultHistory(from, to, { page, pageSize }) {
   const roundsWithExtra = await prisma.marketRound.findMany({
     where: {
       status: 'settled',
-      settledAt: {
-        gte: from,
-        lt: to,
+      sessionOn: {
+        gte: settlementDate(from),
+        lt: settlementDate(to),
       },
     },
     include: {
       market: { select: { name: true, symbol: true } },
     },
     orderBy: [
+      { sessionOn: 'desc' },
       { settledAt: 'desc' },
       { roundNumber: 'desc' },
       { marketId: 'desc' },
@@ -1043,6 +1066,7 @@ export async function listResultHistory(from, to, { page, pageSize }) {
       result: round.result,
       roundNumber: round.roundNumber,
       settledAt: round.settledAt,
+      sessionOn: indiaDateKey(round.sessionOn),
     })),
     pagination: { page, pageSize, hasMore },
   };

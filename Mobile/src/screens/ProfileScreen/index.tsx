@@ -119,7 +119,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   return (
     <ScreenLayout showHeader={false}>
-      <NavHeader title="My Profile" onBack={onBack} rightIcon="bell-outline" />
+      <NavHeader title="My Profile" onBack={onBack} />
 
       <ScrollView
         style={styles.scroll}
