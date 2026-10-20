@@ -192,8 +192,9 @@ export function toPublicMarket(market, totals, lastResultAt = null) {
     closeTime: market.closeTime,
     maxParticipants: market.maxParticipants,
     participants,
-    entryAmount: moneyNumber(market.entryAmount),
-    totalBetAmount: totals?.totalBetAmount ?? moneyNumber(market.entryAmount) * participants,
+    minBetAmount: moneyNumber(market.minBetAmount),
+    maxBetAmount: moneyNumber(market.maxBetAmount),
+    totalBetAmount: totals?.totalBetAmount ?? 0,
     currentRound: market.currentRound,
     lastResult: market.lastResult,
     lastResultAt,
@@ -368,7 +369,7 @@ export async function listJoinedMarketIds(userId) {
   return entries.map((entry) => entry.marketId);
 }
 
-async function cancelStaleRoundBeforeBet(marketId, now = new Date()) {
+async function rejectBetForUnsettledStaleRound(marketId, now = new Date()) {
   const market = await prisma.market.findUnique({ where: { id: marketId } });
   if (!market) {
     return;
@@ -389,12 +390,16 @@ async function cancelStaleRoundBeforeBet(marketId, now = new Date()) {
     firstEntry.createdAt,
   );
   if (indiaDateKey(now) !== indiaDateKey(closeAt)) {
-    await cancelMarketRound(market, closeAt);
+    throw new ApiError(
+      409,
+      'The previous market round is waiting for its result',
+      'MARKET_RESULT_PENDING',
+    );
   }
 }
 
-export async function joinMarket(userId, marketId, pickedNumber) {
-  await cancelStaleRoundBeforeBet(marketId);
+export async function joinMarket(userId, marketId, pickedNumber, amount) {
+  await rejectBetForUnsettledStaleRound(marketId);
 
   return prisma.$transaction(async (tx) => {
     const market = await tx.market.findUnique({ where: { id: marketId } });
@@ -406,6 +411,17 @@ export async function joinMarket(userId, marketId, pickedNumber) {
     if (!isMarketOpen(market.openTime, market.closeTime)) {
       throw new ApiError(400, 'This market is not open for joining', 'MARKET_NOT_OPEN');
     }
+
+    const minBetAmount = moneyNumber(market.minBetAmount);
+    const maxBetAmount = moneyNumber(market.maxBetAmount);
+    if (amount < minBetAmount || amount > maxBetAmount) {
+      throw new ApiError(
+        400,
+        `Bet amount must be between ₹${minBetAmount} and ₹${maxBetAmount}`,
+        'BET_AMOUNT_OUT_OF_RANGE',
+      );
+    }
+    const betAmount = new Prisma.Decimal(amount).toDecimalPlaces(2);
 
     try {
       await tx.marketParticipation.create({
@@ -437,8 +453,8 @@ export async function joinMarket(userId, marketId, pickedNumber) {
     }
 
     const debit = await tx.user.updateMany({
-      where: { id: userId, walletBalance: { gte: market.entryAmount } },
-      data: { walletBalance: { decrement: market.entryAmount } },
+      where: { id: userId, walletBalance: { gte: betAmount } },
+      data: { walletBalance: { decrement: betAmount } },
     });
 
     if (debit.count !== 1) {
@@ -450,7 +466,7 @@ export async function joinMarket(userId, marketId, pickedNumber) {
         marketId,
         roundNumber: market.currentRound,
         userId,
-        amount: market.entryAmount,
+        amount: betAmount,
         pickedNumber,
       },
     });
@@ -464,7 +480,7 @@ export async function joinMarket(userId, marketId, pickedNumber) {
     return {
       marketId,
       roundNumber: market.currentRound,
-      entryAmount: moneyNumber(market.entryAmount),
+      entryAmount: moneyNumber(betAmount),
       pickedNumber,
       participants: market.participants + 1,
       maxParticipants: market.maxParticipants,
@@ -931,25 +947,19 @@ export async function settleDueMarkets(now = new Date()) {
     return { settled: [], canceled: [], skipped };
   }
 
-  const canStillUseQuote = dueMarkets.filter(
-    (market) => indiaDateKey(now) === indiaDateKey(market.closeAt),
-  );
-  const staleMarkets = dueMarkets.filter(
-    (market) => indiaDateKey(now) !== indiaDateKey(market.closeAt),
-  );
   let quotes = [];
   let quoteFailure = null;
-  if (canStillUseQuote.length > 0) {
+  if (dueMarkets.length > 0) {
     if (!env.rapidApiKey) {
       quoteFailure = 'Market result API key is not configured';
     } else {
       try {
         quotes = await fetchMarketQuotes(
-          canStillUseQuote.map((market) => market.symbol),
+          dueMarkets.map((market) => market.symbol),
         );
       } catch (error) {
         quoteFailure = error.message;
-        console.error('Market quote fetch failed; canceling overdue rounds', error);
+        console.error('Market quote fetch failed', error);
       }
     }
   }
@@ -962,13 +972,23 @@ export async function settleDueMarkets(now = new Date()) {
 
   await Promise.all(
     dueMarkets.map(async (market) => {
-      const stale = staleMarkets.some((staleMarket) => staleMarket.id === market.id);
       const quote = quotesBySymbol.get(market.symbol.toUpperCase());
-      if (stale || quoteFailure || !quote || quote.regularMarketPrice == null) {
-        const reason = stale
-          ? 'Result was not declared before the next market day'
-          : quoteFailure ??
-            'No regularMarketPrice was returned by the quote provider';
+      if (quoteFailure || !quote || quote.regularMarketPrice == null) {
+        const reason =
+          quoteFailure ??
+          'No regularMarketPrice was returned by the quote provider';
+        const cancelAt =
+          market.closeAt.getTime() +
+          (env.resultDelayMinutes + env.resultWaitMinutes) * 60 * 1000;
+        if (now.getTime() < cancelAt) {
+          skipped.push({
+            marketId: market.id,
+            symbol: market.symbol,
+            reason: `${reason}; will retry until ${new Date(cancelAt).toISOString()}`,
+          });
+          return;
+        }
+
         const outcome = await cancelMarketRound(market, market.closeAt);
         if (outcome) {
           canceled.push({ ...outcome, reason });

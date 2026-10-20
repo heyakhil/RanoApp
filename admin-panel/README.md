@@ -21,9 +21,10 @@ npm run dev
 
 Open the local URL shown in the terminal (usually `http://localhost:5173`).
 
-By default, the panel connects to port `4000` on the same hostname used to open
-the panel. Set `VITE_API_BASE_URL` in an `.env` file when the backend is hosted
-elsewhere, for example `VITE_API_BASE_URL=http://192.168.1.20:4000/api/v1`.
+In development, the panel connects to port `4000` on the same hostname used to
+open the panel. Production builds default to `https://api.ranoapps.com/api/v1`.
+Set `VITE_API_BASE_URL` in an `.env` file to override either URL, for example
+`VITE_API_BASE_URL=http://192.168.1.20:4000/api/v1`.
 When using a custom backend URL, allow the panel's origin in the backend's
 `CORS_ORIGINS` setting. Market listing uses the public API; creating,
 editing, and deleting markets require an admin Bearer JWT. Configure

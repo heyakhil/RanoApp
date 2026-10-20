@@ -95,10 +95,13 @@ Market create, update, and delete endpoints require an admin JWT issued by
 `POST /api/v1/admin/login`; mobile user tokens cannot modify markets. Market
 times use 24-hour `HH:mm` values in Asia/Kolkata time. Configure an external
 cron to call `POST /api/v1/markets/results/settle` with the `X-Cron-Secret`
-header. After the configured `RESULT_DELAY_MINUTES` window, a round is settled
-if a result quote is available; otherwise it is canceled, each player's bet is
-refunded, and its commission is reversed. A missed round from an earlier
-market day is canceled and refunded rather than settled with a newer quote.
+header. After the configured `RESULT_DELAY_MINUTES` window (5 minutes by
+default), a round is eligible for settlement. The endpoint can settle it at any
+later time once a result quote is available. If no quote can be fetched, the
+round stays pending so a later call can retry; only after a further
+`RESULT_WAIT_MINUTES` (15 minutes by default) without a quote is it canceled,
+each player's bet refunded, and its commission reversed. New bets are blocked
+while a previous round is awaiting its result.
 
 Withdrawal amounts are reserved from the user's wallet when a request is
 submitted. Rejecting a request returns the reserved amount to the wallet;

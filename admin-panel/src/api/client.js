@@ -1,6 +1,11 @@
+
+
+const DEFAULT_API_BASE_URL = import.meta.env.PROD
+  ? 'https://api.ranoapps.com/api/v1'
+  : `${window.location.protocol}//${window.location.hostname}:4000/api/v1`
+
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ||
-  `${window.location.protocol}//${window.location.hostname}:4000/api/v1`
+  import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL
 ).replace(/\/$/, '')
 
 export const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, '')
@@ -41,7 +46,7 @@ export async function apiRequest(path, { method = 'GET', body, authenticated = f
   } catch (error) {
     console.error('Unable to reach the admin API.', error)
     throw new Error(
-      `Cannot reach the API at ${API_BASE_URL}. Check that the backend is running and that this admin page's origin is allowed by the backend.`,
+      `Cannot reach the API at ${API_BASE_URL} (${error.message}). Check that the backend is running and that this admin page's origin is allowed by the backend.`,
       { cause: error },
     )
   }

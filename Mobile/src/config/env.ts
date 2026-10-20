@@ -1,9 +1,10 @@
 export const env = {
   /**
-   * Android emulator → host machine. On a physical device, use your PC LAN IP
-   * e.g. http://192.168.1.10:4000/api/v1
+   * Development builds use the local backend; release builds use production.
    */
-  apiBaseUrl: 'http://192.168.29.211:4000/api/v1',
+  apiBaseUrl: __DEV__
+    ? 'http://192.168.29.211:4000/api/v1'
+    : 'https://api.ranoapps.com/api/v1',
   isDev: __DEV__,
   /**
    * Firebase / Google Cloud Web client ID (client_type: 3).

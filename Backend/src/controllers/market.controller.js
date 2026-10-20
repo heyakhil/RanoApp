@@ -60,7 +60,12 @@ export const listMyEntries = asyncHandler(async (req, res) => {
 });
 
 export const joinMarket = asyncHandler(async (req, res) => {
-  const entry = await betService.joinMarket(req.auth.userId, req.params.id, req.body.number);
+  const entry = await betService.joinMarket(
+    req.auth.userId,
+    req.params.id,
+    req.body.number,
+    req.body.amount,
+  );
   return sendSuccess(res, 201, entry, 'Bet placed');
 });
 

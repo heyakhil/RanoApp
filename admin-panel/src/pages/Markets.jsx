@@ -19,7 +19,8 @@ const emptyMarket = {
   openTime: '09:15',
   closeTime: '15:30',
   maxParticipants: '100',
-  entryAmount: '0',
+  minBetAmount: '10',
+  maxBetAmount: '1000',
 }
 
 const fieldClassName = 'w-full'
@@ -31,7 +32,8 @@ function toFormValues(market) {
     openTime: market.openTime,
     closeTime: market.closeTime,
     maxParticipants: String(market.maxParticipants),
-    entryAmount: String(market.entryAmount),
+    minBetAmount: String(market.minBetAmount),
+    maxBetAmount: String(market.maxBetAmount),
   }
 }
 
@@ -42,7 +44,8 @@ function toPayload(form) {
     openTime: form.openTime,
     closeTime: form.closeTime,
     maxParticipants: Number(form.maxParticipants),
-    entryAmount: Number(form.entryAmount),
+    minBetAmount: Number(form.minBetAmount),
+    maxBetAmount: Number(form.maxBetAmount),
   }
 }
 
@@ -155,8 +158,12 @@ export default function Markets() {
       setFormError('Maximum bets must be a whole number greater than zero.')
       return
     }
-    if (!Number.isFinite(payload.entryAmount) || payload.entryAmount < 0) {
-      setFormError('Entry amount must be zero or greater.')
+    if (!Number.isFinite(payload.minBetAmount) || payload.minBetAmount <= 0) {
+      setFormError('Minimum bet amount must be greater than zero.')
+      return
+    }
+    if (!Number.isFinite(payload.maxBetAmount) || payload.maxBetAmount < payload.minBetAmount) {
+      setFormError('Maximum bet amount must be greater than or equal to the minimum.')
       return
     }
 
@@ -289,8 +296,10 @@ export default function Markets() {
                       Up to {market.maxParticipants} bets
                     </p>
                     <p>
-                      Entry amount:{' '}
-                      <span className="font-medium text-gray-900">₹{market.entryAmount}</span>
+                      Bet range:{' '}
+                      <span className="font-medium text-gray-900">
+                        ₹{market.minBetAmount} – ₹{market.maxBetAmount}
+                      </span>
                     </p>
                     <p>
                       Bets placed:{' '}
@@ -311,9 +320,9 @@ export default function Markets() {
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
-                  <Button color="blue" size="sm" onClick={() => openResult(market)}>
+                  {/* <Button color="blue" size="sm" onClick={() => openResult(market)}>
                     Declare result
-                  </Button>
+                  </Button> */}
                   <Button color="light" size="sm" onClick={() => openEditor(market)}>
                     <Pencil className="mr-2 h-4 w-4" />
                     Edit
@@ -474,15 +483,29 @@ export default function Markets() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="market-entry-amount">Entry amount (₹)</Label>
+                  <Label htmlFor="market-min-bet-amount">Minimum bet amount (₹)</Label>
                   <TextInput
                     className={fieldClassName}
-                    id="market-entry-amount"
-                    name="entryAmount"
+                    id="market-min-bet-amount"
+                    name="minBetAmount"
                     type="number"
-                    min="0"
+                    min="0.01"
                     step="0.01"
-                    value={form.entryAmount}
+                    value={form.minBetAmount}
+                    onChange={updateField}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="market-max-bet-amount">Maximum bet amount (₹)</Label>
+                  <TextInput
+                    className={fieldClassName}
+                    id="market-max-bet-amount"
+                    name="maxBetAmount"
+                    type="number"
+                    min={form.minBetAmount || '0.01'}
+                    step="0.01"
+                    value={form.maxBetAmount}
                     onChange={updateField}
                     required
                   />

@@ -68,6 +68,15 @@ export async function updateMarket(id, input) {
       'INVALID_MARKET_HOURS',
     );
   }
+  const nextMinBetAmount = input.minBetAmount ?? Number(currentMarket.minBetAmount);
+  const nextMaxBetAmount = input.maxBetAmount ?? Number(currentMarket.maxBetAmount);
+  if (nextMinBetAmount > nextMaxBetAmount) {
+    throw new ApiError(
+      400,
+      'Maximum bet amount must be greater than or equal to the minimum',
+      'INVALID_BET_RANGE',
+    );
+  }
 
   try {
     const market = await prisma.market.update({

@@ -127,9 +127,12 @@ function timeLeft(
   const remainingMs =
     resultMoment(order).getTime() - now.getTime();
   if (remainingMs <= 0) {
+    const waitingForResult =
+      now.getTime() - resultMoment(order).getTime() < 15 * 60 * 1000;
+
     return {
       label: 'Round status',
-      value: 'Cancellation pending',
+      value: waitingForResult ? 'Waiting For Result' : 'Cancellation pending',
       tone: 'waiting',
     };
   }

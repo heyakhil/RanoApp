@@ -12,7 +12,8 @@ export interface ApiMarket {
   closeTime: string;
   maxParticipants: number;
   participants: number;
-  entryAmount: number;
+  minBetAmount: number;
+  maxBetAmount: number;
   totalBetAmount: number;
   currentRound: number;
   lastResult: string | null;
@@ -158,10 +159,11 @@ export async function fetchMyOrders(
 export async function joinMarket(
   marketId: string,
   number: number,
+  amount: number,
 ): Promise<MarketJoinResult> {
   const response = await apiClient.post<MarketJoinResult>(
     `/markets/${encodeURIComponent(marketId)}/join`,
-    { number },
+    { number, amount },
   );
 
   if (!response.success || !response.data) {
@@ -217,25 +219,27 @@ export function getFeaturedMarket(
   markets: Market[],
   now: Date,
 ): Market | undefined {
-  if (markets.length === 0) return undefined;
+  return markets
+    .filter(market => market.status === 'open')
+    .reduce<Market | undefined>((featured, market) => {
+      const [hours, minutes] = market.closeTime.split(':').map(Number);
+      const closesAt = new Date(now);
+      closesAt.setHours(hours, minutes, 0, 0);
+      if (closesAt <= now) {
+        closesAt.setDate(closesAt.getDate() + 1);
+      }
 
-  const openMarket = markets.find(market => market.status === 'open');
-  if (openMarket) return openMarket;
+      if (!featured) return market;
 
-  const currentTime = currentTimeString(now);
-  const upcomingToday = markets
-    .filter(market => market.openTime > currentTime)
-    .sort((first, second) => first.openTime.localeCompare(second.openTime));
+      const [featuredHours, featuredMinutes] = featured.closeTime
+        .split(':')
+        .map(Number);
+      const featuredClosesAt = new Date(now);
+      featuredClosesAt.setHours(featuredHours, featuredMinutes, 0, 0);
+      if (featuredClosesAt <= now) {
+        featuredClosesAt.setDate(featuredClosesAt.getDate() + 1);
+      }
 
-  if (upcomingToday.length > 0) return upcomingToday[0];
-
-  const firstTomorrow = [...markets].sort((first, second) =>
-    first.openTime.localeCompare(second.openTime),
-  )[0];
-
-  return {
-    ...firstTomorrow,
-    status: 'upcoming',
-    schedule: `Tomorrow · ${formatTime(firstTomorrow.openTime)}`,
-  };
+      return closesAt < featuredClosesAt ? market : featured;
+    }, undefined);
 }

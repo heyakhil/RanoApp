@@ -34,6 +34,14 @@ const closeIcon = ({ size, color }: { size: number; color: string }) => (
   <MaterialCommunityIcons name="close" size={size} color={color} />
 );
 
+/** Keeps digits and a single decimal point with at most two decimals. */
+const sanitizeAmount = (value: string) => {
+  const [whole, ...fraction] = value.replace(/[^\d.]/g, '').split('.');
+  return fraction.length > 0
+    ? `${whole}.${fraction.join('').slice(0, 2)}`
+    : whole;
+};
+
 interface HomeScreenProps {
   isActive?: boolean;
 }
@@ -47,6 +55,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
   const [loadError, setLoadError] = useState('');
   const [isPickingNumber, setIsPickingNumber] = useState(false);
   const [pickValue, setPickValue] = useState('');
+  const [amountValue, setAmountValue] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [now, setNow] = useState(() => new Date());
@@ -103,16 +112,31 @@ console.log("Markets", markets);
   const canAfford =
     activeMarket !== null &&
     walletBalance !== null &&
-    walletBalance >= activeMarket.entryAmount;
+    walletBalance >= activeMarket.minBetAmount;
   const canJoin =
     activeMarket?.status === 'open' && !hasJoined && !isFull && canAfford;
+
+  const resetBetForm = () => {
+    setIsPickingNumber(false);
+    setPickValue('');
+    setAmountValue('');
+    setJoinError('');
+  };
+
+  const openMarket = (market: Market) => {
+    resetBetForm();
+    setSelectedMarket(market);
+  };
 
   const closeDetails = () => {
     if (isJoining) return;
     setSelectedMarket(null);
-    setIsPickingNumber(false);
-    setPickValue('');
-    setJoinError('');
+    resetBetForm();
+  };
+
+  const closeBetForm = () => {
+    if (isJoining) return;
+    resetBetForm();
   };
 
   useEffect(() => {
@@ -128,6 +152,7 @@ console.log("Markets", markets);
       if (isPickingNumber) {
         setIsPickingNumber(false);
         setPickValue('');
+        setAmountValue('');
         setJoinError('');
         return true;
       }
@@ -152,10 +177,24 @@ console.log("Markets", markets);
       return;
     }
 
+    const amount = Number(amountValue);
+    const { minBetAmount, maxBetAmount } = activeMarket;
+    if (!Number.isFinite(amount) || amount < minBetAmount || amount > maxBetAmount) {
+      showMessage({
+        message: `Enter an amount from ₹${minBetAmount} to ₹${maxBetAmount}.`,
+        type: 'danger',
+      });
+      return;
+    }
+    if (walletBalance !== null && amount > walletBalance) {
+      showMessage({ message: 'Insufficient wallet balance.', type: 'danger' });
+      return;
+    }
+
     setIsJoining(true);
     setJoinError('');
     try {
-      const entry = await joinMarket(activeMarket.id, number);
+      const entry = await joinMarket(activeMarket.id, number, amount);
       setJoinedIds(current =>
         current.includes(entry.marketId) ? current : [...current, entry.marketId],
       );
@@ -172,10 +211,9 @@ console.log("Markets", markets);
         ),
       );
       setSelectedMarket(null);
-      setIsPickingNumber(false);
-      setPickValue('');
+      resetBetForm();
       showMessage({
-        message: `Bet placed on ${activeMarket.name} with number ${number}.`,
+        message: `Bet of ₹${entry.entryAmount} placed on ${activeMarket.name} with number ${number}.`,
         type: 'success',
       });
     } catch (error) {
@@ -200,7 +238,7 @@ console.log("Markets", markets);
             ? 'Market is full'
             : !canAfford
               ? 'Insufficient wallet balance'
-              : `Place bet for ₹${activeMarket.entryAmount}`;
+              : 'Place bet';
 
   return (
     <ScreenLayout showHeader={false}>
@@ -263,12 +301,8 @@ console.log("Markets", markets);
           {featured && (
             <MarketCard
               market={featured}
-              onPress={() => {
-                setJoinError('');
-                setIsPickingNumber(false);
-                setPickValue('');
-                setSelectedMarket(featured);
-              }}
+              isFeatured
+              onPress={() => openMarket(featured)}
             />
           )}
 
@@ -311,12 +345,7 @@ console.log("Markets", markets);
               <MarketCard
                 key={market.id}
                 market={market}
-                onPress={() => {
-                  setJoinError('');
-                  setIsPickingNumber(false);
-                  setPickValue('');
-                  setSelectedMarket(market);
-                }}
+                onPress={() => openMarket(market)}
               />
             ))
           ) : (
@@ -341,7 +370,7 @@ console.log("Markets", markets);
 
       <Portal>
         <Modal
-          visible={activeMarket !== null}
+          visible={activeMarket !== null && !isPickingNumber}
           onDismiss={closeDetails}
           contentContainerStyle={styles.modal}
         >
@@ -395,7 +424,8 @@ console.log("Markets", markets);
                 </View>
               </View>
               <Text variant="bodyMedium" style={styles.detailHint}>
-                The entry amount is taken from your wallet. After the admin
+                Pick a number and choose how much to bet within the range. The
+                amount is taken from your wallet. After the admin
                 declares the result, this round closes and a new one starts.
               </Text>
               <View style={styles.facts}>
@@ -417,7 +447,7 @@ console.log("Markets", markets);
                 </View>
                 <View style={styles.factRow}>
                   <Text variant="bodySmall" style={styles.factLabel}>
-                    Entry amount
+                    Bet range
                   </Text>
                   <View style={styles.factAmount}>
                     <FontAwesome6
@@ -426,7 +456,7 @@ console.log("Markets", markets);
                       color={colors.text}
                     />
                     <Text variant="labelMedium" style={styles.factValue}>
-                      {activeMarket.entryAmount}
+                      {activeMarket.minBetAmount} – {activeMarket.maxBetAmount}
                     </Text>
                   </View>
                 </View>
@@ -452,47 +482,103 @@ console.log("Markets", markets);
                   {joinError}
                 </Text>
               ) : null}
-              {isPickingNumber && canJoin ? (
-                <View style={styles.numberBlock}>
-                  <TextInput
-                    mode="outlined"
-                    label="Your number"
-                    value={pickValue}
-                    onChangeText={value =>
-                      setPickValue(value.replace(/\D/g, '').slice(0, 2))
-                    }
-                    keyboardType="number-pad"
-                    maxLength={2}
-                    disabled={isJoining}
-                    style={styles.numberInput}
-                  />
-                  <Text variant="bodySmall" style={styles.numberHint}>
-                    Enter a number from 1 to 99. ₹{activeMarket.entryAmount} will
-                    be deducted from your wallet.
+              <Button
+                mode="contained"
+                disabled={!canJoin || isJoining}
+                style={styles.disabledButton}
+                onPress={() => {
+                  resetBetForm();
+                  setIsPickingNumber(true);
+                }}
+              >
+                {joinLabel}
+              </Button>
+            </ScrollView>
+          )}
+        </Modal>
+
+        <Modal
+          visible={activeMarket !== null && isPickingNumber && canJoin}
+          onDismiss={closeBetForm}
+          contentContainerStyle={styles.modal}
+        >
+          {activeMarket && (
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalContent}
+            >
+              <View style={styles.modalHeader}>
+                <Text variant="titleLarge" style={styles.modalTitle}>
+                  Place your bet
+                </Text>
+                <IconButton
+                  icon={closeIcon}
+                  accessibilityLabel="Close bet form"
+                  onPress={closeBetForm}
+                />
+              </View>
+              <View style={styles.numberBlock}>
+                <Text variant="bodyMedium" style={styles.detailHint}>
+                  {activeMarket.name} · Wallet balance{' '}
+                  {walletBalance === null ? '—' : `₹${walletBalance}`}
+                </Text>
+                <TextInput
+                  mode="outlined"
+                  label="Your number"
+                  value={pickValue}
+                  onChangeText={value =>
+                    setPickValue(value.replace(/\D/g, '').slice(0, 2))
+                  }
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  disabled={isJoining}
+                  style={styles.numberInput}
+                />
+                <Text variant="bodySmall" style={styles.numberHint}>
+                  Enter a number from 1 to 99.
+                </Text>
+                <TextInput
+                  mode="outlined"
+                  label="Bet amount (₹)"
+                  value={amountValue}
+                  onChangeText={value => setAmountValue(sanitizeAmount(value))}
+                  keyboardType="decimal-pad"
+                  disabled={isJoining}
+                  style={styles.numberInput}
+                />
+                <Text variant="bodySmall" style={styles.numberHint}>
+                  Min ₹{activeMarket.minBetAmount} · Max ₹
+                  {activeMarket.maxBetAmount}. This amount will be deducted
+                  from your wallet.
+                </Text>
+                {joinError ? (
+                  <Text variant="bodySmall" style={styles.joinError}>
+                    {joinError}
                   </Text>
+                ) : null}
+                <View style={styles.betActions}>
+                  <Button
+                    mode="outlined"
+                    style={styles.betAction}
+                    disabled={isJoining}
+                    onPress={closeBetForm}
+                  >
+                    Cancel
+                  </Button>
                   <Button
                     mode="contained"
+                    style={styles.betAction}
                     loading={isJoining}
-                    disabled={isJoining || pickValue.length < 1}
+                    disabled={
+                      isJoining || pickValue.length < 1 || amountValue.length < 1
+                    }
                     onPress={placeBet}
                   >
-                    Place bet
+                    Confirm bet
                   </Button>
                 </View>
-              ) : (
-                <Button
-                  mode="contained"
-                  disabled={!canJoin || isJoining}
-                  style={styles.disabledButton}
-                  onPress={() => {
-                    setJoinError('');
-                    setPickValue('');
-                    setIsPickingNumber(true);
-                  }}
-                >
-                  {joinLabel}
-                </Button>
-              )}
+              </View>
             </ScrollView>
           )}
         </Modal>

@@ -178,9 +178,11 @@ export const styles = StyleSheet.create({
   noticeText: { color: colors.text, flex: 1, marginLeft: 8, lineHeight: 19 },
   disabledButton: { marginTop: 18 },
   joinError: { color: colors.error, marginTop: 12 },
-  numberBlock: { marginTop: 18, gap: 10 },
+  numberBlock: { gap: 10 },
   numberInput: { backgroundColor: colors.white },
   numberHint: { color: colors.textSecondary, lineHeight: 18 },
+  betActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  betAction: { flex: 1 },
   rightHeader:{
     flexDirection: 'row',
     alignItems: 'center',

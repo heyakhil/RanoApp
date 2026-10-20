@@ -21,7 +21,13 @@ export function createApp() {
     cors({
       origin: (origin, callback) => {
         // React Native and same-machine tools often send no Origin header
-        if (!origin || env.corsOrigins.length === 0 || env.corsOrigins.includes(origin)) {
+        // Any origin is allowed outside production so local dev ports/hosts just work
+        if (
+          !origin ||
+          !env.isProduction ||
+          env.corsOrigins.length === 0 ||
+          env.corsOrigins.includes(origin)
+        ) {
           callback(null, true);
           return;
         }

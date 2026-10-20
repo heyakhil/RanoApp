@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "979849513501-7ecb6gj56mfllltsskoasq649oh1ncq7.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ranoapp",
+            "certificate_hash": "988da02a7a3939bbb7d5bc85c4a9758421a03bd7"
+          }
+        },
+        {
           "client_id": "979849513501-582afh0f5c0qj74pr2e1nbn8fujjsogg.apps.googleusercontent.com",
           "client_type": 3
         }

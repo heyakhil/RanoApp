@@ -9,6 +9,7 @@ import { styles } from './styles';
 interface MarketCardProps {
   market: Market;
   onPress: () => void;
+  isFeatured?: boolean;
 }
 
 const status = {
@@ -29,20 +30,24 @@ const status = {
   },
 };
 
-export const MarketCard: React.FC<MarketCardProps> = ({ market, onPress }) => {
+export const MarketCard: React.FC<MarketCardProps> = ({
+  market,
+  onPress,
+  isFeatured = false,
+}) => {
   const progress =
     market.capacity > 0
       ? Math.min(1, Math.max(0, market.participants / market.capacity))
       : 0;
   const remaining = Math.max(0, market.capacity - market.participants);
-  const state = status[market.status];
+  const state = status[isFeatured ? 'upcoming' : market.status];
   
   return (
     <Card
       mode="outlined"
       style={styles.card}
       onPress={onPress}
-      accessibilityLabel={`View ${market.symbol} market, ${market.participants} of ${market.capacity} bets, ₹${market.entryAmount} entry`}
+      accessibilityLabel={`View ${market.symbol} market, ${market.participants} of ${market.capacity} bets, bet ₹${market.minBetAmount} to ₹${market.maxBetAmount}`}
     >
       <Card.Content style={styles.content}>
         <View style={styles.topRow}>
@@ -122,7 +127,7 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onPress }) => {
                   Bet
                 </Text>
                 <Text variant="titleMedium" style={styles.entryValue}>
-                  ₹{market.entryAmount}
+                  ₹{market.minBetAmount}–{market.maxBetAmount}
                 </Text>
                 <MaterialCommunityIcons
                   name="chevron-right"

@@ -21,6 +21,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
  * @property {string} rapidApiHost
  * @property {string} yahooQuotesUrl
  * @property {number} resultDelayMinutes
+ * @property {number} resultWaitMinutes
  * @property {string} resultCronSecret
  * @property {boolean} isProduction
  */
@@ -47,9 +48,14 @@ function loadEnv() {
     throw new Error('ADMIN_JWT_EXPIRES_IN_SECONDS must be a positive integer');
   }
 
-  const resultDelayMinutes = Number(process.env.RESULT_DELAY_MINUTES ?? 15);
+  const resultDelayMinutes = Number(process.env.RESULT_DELAY_MINUTES ?? 5);
   if (!Number.isInteger(resultDelayMinutes) || resultDelayMinutes < 0) {
     throw new Error('RESULT_DELAY_MINUTES must be a whole number of minutes');
+  }
+
+  const resultWaitMinutes = Number(process.env.RESULT_WAIT_MINUTES ?? 15);
+  if (!Number.isInteger(resultWaitMinutes) || resultWaitMinutes < 0) {
+    throw new Error('RESULT_WAIT_MINUTES must be a whole number of minutes');
   }
 
   const commissionPercent = Number(process.env.COMMISSION_PERCENT ?? 10);
@@ -87,6 +93,7 @@ function loadEnv() {
       process.env.YAHOO_QUOTES_URL ||
       'https://yahoo-finance166.p.rapidapi.com/api/market/get-quote-v2',
     resultDelayMinutes,
+    resultWaitMinutes,
     resultCronSecret: process.env.RESULT_CRON_SECRET || '',
     isProduction: process.env.NODE_ENV === 'production',
   };
