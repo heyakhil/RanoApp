@@ -13,7 +13,10 @@ export async function listUsers({ page, pageSize }) {
   ]);
 
   return {
-    users: users.map(toPublicUser),
+    users: users.map((user) => ({
+      ...toPublicUser(user),
+      walletBalance: user.walletBalance.toString(),
+    })),
     pagination: {
       page,
       pageSize,

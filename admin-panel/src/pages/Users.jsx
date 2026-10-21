@@ -31,6 +31,14 @@ function formatDate(value) {
   }).format(date)
 }
 
+function formatRupees(amount) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(Number(amount) || 0)
+}
+
 export default function Users() {
   const [users, setUsers] = useState([])
   const [pagination, setPagination] = useState({
@@ -141,6 +149,7 @@ export default function Users() {
                     <TableHeadCell>Name</TableHeadCell>
                     <TableHeadCell>Email</TableHeadCell>
                     <TableHeadCell>Mobile</TableHeadCell>
+                    <TableHeadCell>Total Balance</TableHeadCell>
                     <TableHeadCell>Gender</TableHeadCell>
                     <TableHeadCell>Profile</TableHeadCell>
                     <TableHeadCell>Joined</TableHeadCell>
@@ -154,6 +163,9 @@ export default function Users() {
                       </TableCell>
                       <TableCell>{user.email}</TableCell>
                       <TableCell>{user.mobile || '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap font-medium text-gray-900">
+                        {formatRupees(user.walletBalance)}
+                      </TableCell>
                       <TableCell className="capitalize">
                         {user.gender?.replaceAll('_', ' ') || '—'}
                       </TableCell>
