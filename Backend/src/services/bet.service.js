@@ -891,17 +891,16 @@ export async function settleDueMarkets(now = new Date()) {
       const firstEntry = firstEntryByRound.get(
         `${market.id}:${market.currentRound}`,
       );
-      if (!firstEntry || !isResultDue(market, now, firstEntry.createdAt)) {
+      // Markets without bets still get a result for the current session.
+      if (!isResultDue(market, now, firstEntry?.createdAt ?? null)) {
         return null;
       }
 
       return {
         ...market,
-        closeAt: sessionCloseForEntry(
-          market.openTime,
-          market.closeTime,
-          firstEntry.createdAt,
-        ),
+        closeAt: firstEntry
+          ? sessionCloseForEntry(market.openTime, market.closeTime, firstEntry.createdAt)
+          : sessionClose(market.openTime, market.closeTime, now, market.lastSettledClose),
       };
     })
     .filter(Boolean);
