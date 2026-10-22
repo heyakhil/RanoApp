@@ -76,6 +76,12 @@ export const deleteMarket = (id) =>
 
 export const getOverview = () => apiRequest('/admin/overview', { authenticated: true })
 
+export const settleCommission = () =>
+  apiRequest('/admin/commission/settle', {
+    method: 'POST',
+    authenticated: true,
+  })
+
 export const declareMarketResult = (id, result) =>
   apiRequest(`/markets/${encodeURIComponent(id)}/result`, {
     method: 'POST',

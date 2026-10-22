@@ -14,6 +14,7 @@ router.post(
   adminController.changePassword,
 );
 router.get('/overview', requireAdminOrSubadmin, adminController.getOverview);
+router.post('/commission/settle', requireAdmin, adminController.settleCommission);
 router.get('/users', requireAdmin, adminController.getUsers);
 
 export default router;

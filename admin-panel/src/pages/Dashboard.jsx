@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Badge, Button, Card, Spinner } from 'flowbite-react'
+import { Alert, Badge, Button, Card, Modal, ModalBody, ModalFooter, ModalHeader, Spinner } from 'flowbite-react'
 import { Users, DollarSign, Percent, RefreshCw } from 'lucide-react'
-import { getOverview } from '../api/markets'
+import { getOverview, settleCommission } from '../api/markets'
+import { useAuth } from '../context/AuthContext'
 
 function formatRupees(amount) {
   return new Intl.NumberFormat('en-IN', {
@@ -12,9 +13,14 @@ function formatRupees(amount) {
 }
 
 export default function Dashboard() {
+  const { isSubadmin } = useAuth()
   const [overview, setOverview] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const [isSettlementOpen, setIsSettlementOpen] = useState(false)
+  const [isSettling, setIsSettling] = useState(false)
+  const [settlementError, setSettlementError] = useState('')
+  const [settlementMessage, setSettlementMessage] = useState('')
 
   const loadOverview = useCallback(async () => {
     setIsLoading(true)
@@ -27,6 +33,36 @@ export default function Dashboard() {
       setIsLoading(false)
     }
   }, [])
+
+  const confirmSettlement = async () => {
+    setIsSettling(true)
+    setSettlementError('')
+
+    try {
+      const settled = await settleCommission()
+      setOverview((current) =>
+        current
+          ? {
+              ...current,
+              commission: {
+                ...current.commission,
+                total: 0,
+                adminShare: 0,
+                subadminShare: 0,
+              },
+            }
+          : current,
+      )
+      setIsSettlementOpen(false)
+      setSettlementMessage(
+        `Settled ${formatRupees(settled.adminShare)} for admin and ${formatRupees(settled.subadminShare)} for subadmin. Both balances have been reset to zero.`,
+      )
+    } catch (settleError) {
+      setSettlementError(settleError.message || 'Unable to settle commission balances.')
+    } finally {
+      setIsSettling(false)
+    }
+  }
 
   useEffect(() => {
     const timeoutId = window.setTimeout(loadOverview, 0)
@@ -62,6 +98,7 @@ export default function Dashboard() {
           detail: 'Equal split of commission',
           icon: Percent,
           tone: 'bg-sky-50 text-sky-600',
+          action: true,
         },
       ]
     : []
@@ -92,6 +129,12 @@ export default function Dashboard() {
         </Alert>
       ) : null}
 
+      {settlementMessage ? (
+        <Alert color="success" onDismiss={() => setSettlementMessage('')}>
+          {settlementMessage}
+        </Alert>
+      ) : null}
+
       {isLoading ? (
         <div className="flex justify-center py-16">
           <Spinner size="xl" />
@@ -101,23 +144,103 @@ export default function Dashboard() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {stats.map((stat) => {
               const Icon = stat.icon
+              const content = (
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-gray-500">{stat.label}</p>
+                    <p className="mt-2 text-2xl font-semibold text-gray-900">{stat.value}</p>
+                    <p className="mt-2 text-xs text-gray-500">{stat.detail}</p>
+                  </div>
+                  <div className={`rounded-xl p-2.5 ${stat.tone}`}>
+                    <Icon className="h-5 w-5" strokeWidth={1.75} />
+                  </div>
+                </div>
+              )
 
               return (
                 <Card key={stat.label} className="border border-gray-100 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm text-gray-500">{stat.label}</p>
-                      <p className="mt-2 text-2xl font-semibold text-gray-900">{stat.value}</p>
-                      <p className="mt-2 text-xs text-gray-500">{stat.detail}</p>
-                    </div>
-                    <div className={`rounded-xl p-2.5 ${stat.tone}`}>
-                      <Icon className="h-5 w-5" strokeWidth={1.75} />
-                    </div>
-                  </div>
+                  {stat.action ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettlementError('')
+                        setIsSettlementOpen(true)
+                      }}
+                      className="w-full rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                      aria-label="View admin and subadmin commission balances"
+                    >
+                      {content}
+                    </button>
+                  ) : content}
                 </Card>
               )
             })}
           </div>
+
+          <Modal
+            show={isSettlementOpen}
+            onClose={() => {
+              if (!isSettling) setIsSettlementOpen(false)
+            }}
+            size="md"
+          >
+            <ModalHeader>Commission settlement</ModalHeader>
+            <ModalBody>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Review the commission amounts to settle. After payout, these accrued
+                  balances will reset to zero and new commission will accumulate again.
+                </p>
+                <div className="space-y-3 rounded-lg bg-gray-50 p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-gray-600">Admin take-home</span>
+                    <span className="font-semibold text-gray-900">
+                      {formatRupees(overview.commission.adminShare)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-gray-600">Subadmin take-home</span>
+                    <span className="font-semibold text-gray-900">
+                      {formatRupees(overview.commission.subadminShare)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 border-t border-gray-200 pt-3">
+                    <span className="text-sm font-medium text-gray-700">Total to settle</span>
+                    <span className="font-semibold text-gray-900">
+                      {formatRupees(overview.commission.total)}
+                    </span>
+                  </div>
+                </div>
+                {settlementError ? (
+                  <Alert color="failure">{settlementError}</Alert>
+                ) : null}
+                {isSubadmin ? (
+                  <p className="text-sm text-gray-500">
+                    Only an administrator can settle commission balances.
+                  </p>
+                ) : (
+                  <p className="text-sm text-amber-700">
+                    Confirm only after these amounts have been paid out. This action resets
+                    the accrued balances.
+                  </p>
+                )}
+              </div>
+            </ModalBody>
+            <ModalFooter>
+              <Button
+                color="light"
+                onClick={() => setIsSettlementOpen(false)}
+                disabled={isSettling}
+              >
+                Cancel
+              </Button>
+              {!isSubadmin ? (
+                <Button color="blue" onClick={confirmSettlement} disabled={isSettling}>
+                  {isSettling ? 'Settling...' : 'Settle commission'}
+                </Button>
+              ) : null}
+            </ModalFooter>
+          </Modal>
 
           <Card className="border border-gray-100 shadow-sm">
             <div className="mb-4">
