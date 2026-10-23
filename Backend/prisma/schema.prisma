@@ -211,9 +211,24 @@ model AdminAccount {
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
   commissionEntries CommissionEntry[]
+  pushSubscriptions AdminPushSubscription[]
 
   @@index([role])
   @@map("admin_accounts")
+}
+
+model AdminPushSubscription {
+  id        String       @id @default(cuid())
+  adminId   String       @map("admin_id")
+  endpoint  String       @unique @db.VarChar(512)
+  p256dh    String       @db.VarChar(255)
+  auth      String       @db.VarChar(255)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  admin     AdminAccount @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("admin_push_subscriptions")
 }
 
 model PaymentDestination {

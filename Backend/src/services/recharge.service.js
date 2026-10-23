@@ -1,5 +1,6 @@
 import { prisma } from '../config/prisma.js';
 import { ApiError } from '../utils/ApiError.js';
+import { notifyAdminsOfRecharge } from './admin-push.service.js';
 import { notifyUser } from './notification.service.js';
 
 /**
@@ -35,7 +36,11 @@ export async function createRecharge(userId, input) {
     include: { user: { select: { name: true, email: true } } },
   });
 
-  return toRecharge(recharge);
+  const result = toRecharge(recharge);
+  void notifyAdminsOfRecharge(result).catch((error) => {
+    console.error('Unable to notify admins of a new recharge.', error);
+  });
+  return result;
 }
 
 export async function listRecharges() {

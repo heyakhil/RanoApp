@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+export const adminPushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(512),
+  keys: z.object({
+    p256dh: z.string().min(1).max(255),
+    auth: z.string().min(1).max(255),
+  }),
+});
+
+export const adminPushUnsubscribeSchema = z.object({
+  endpoint: z.string().url().max(512),
+});
+
 export const adminLoginSchema = z.object({
   username: z.string().trim().min(1).max(120),
   password: z.string().min(1).max(1024),

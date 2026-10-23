@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { loginAdmin } from '../api/markets'
+import { unsubscribeFromAdminPush } from '../services/pushAlerts'
 
 const AUTH_STORAGE_KEY = 'admin_panel_auth'
 
@@ -42,7 +43,12 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await unsubscribeFromAdminPush()
+    } catch (error) {
+      console.error('Unable to turn off recharge push alerts.', error)
+    }
     localStorage.removeItem(AUTH_STORAGE_KEY)
     setUser(null)
   }, [])

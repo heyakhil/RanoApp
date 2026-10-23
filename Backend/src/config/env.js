@@ -23,6 +23,9 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
  * @property {number} resultDelayMinutes
  * @property {number} resultWaitMinutes
  * @property {string} resultCronSecret
+ * @property {string} vapidSubject
+ * @property {string} vapidPublicKey
+ * @property {string} vapidPrivateKey
  * @property {boolean} isProduction
  */
 
@@ -95,6 +98,9 @@ function loadEnv() {
     resultDelayMinutes,
     resultWaitMinutes,
     resultCronSecret: process.env.RESULT_CRON_SECRET || '',
+    vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@ranoapps.com',
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+    vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
     isProduction: process.env.NODE_ENV === 'production',
   };
 }
