@@ -325,6 +325,7 @@ export async function listUserOrders(userId, { page, pageSize }) {
       imageUrl: entry.market.imageUrl ?? '',
       entryAmount: moneyNumber(entry.amount),
       pickedNumber: entry.pickedNumber,
+      digitSide: entry.digitSide,
       payoutAmount: entry.payoutAmount == null ? null : moneyNumber(entry.payoutAmount),
       roundNumber: entry.roundNumber,
       participants,
@@ -398,7 +399,24 @@ async function rejectBetForUnsettledStaleRound(marketId, now = new Date()) {
   }
 }
 
-export async function joinMarket(userId, marketId, pickedNumber, amount) {
+function singleDigitSide(pickedNumber, digitSide) {
+  if (pickedNumber >= 10) {
+    return null;
+  }
+
+  if (digitSide !== 'andar' && digitSide !== 'bahar') {
+    throw new ApiError(
+      400,
+      'Choose Andar or Bahar for a single-digit number',
+      'DIGIT_SIDE_REQUIRED',
+    );
+  }
+
+  return digitSide;
+}
+
+export async function joinMarket(userId, marketId, pickedNumber, amount, digitSide = null) {
+  const side = singleDigitSide(pickedNumber, digitSide);
   await rejectBetForUnsettledStaleRound(marketId);
 
   return prisma.$transaction(async (tx) => {
@@ -468,6 +486,7 @@ export async function joinMarket(userId, marketId, pickedNumber, amount) {
         userId,
         amount: betAmount,
         pickedNumber,
+        digitSide: side,
       },
     });
     await creditBetCommission(tx, entry);
@@ -482,6 +501,7 @@ export async function joinMarket(userId, marketId, pickedNumber, amount) {
       roundNumber: market.currentRound,
       entryAmount: moneyNumber(betAmount),
       pickedNumber,
+      digitSide: side,
       participants: market.participants + 1,
       maxParticipants: market.maxParticipants,
       walletBalance: user.walletBalance.toString(),
@@ -534,11 +554,14 @@ export function isResultDue(market, now = new Date(), roundStartedAt = null) {
 }
 
 /**
- * A two-digit pick must match both result digits. A one-digit pick matches the second digit.
+ * A two-digit pick must match the full result.
+ * Andar matches the left digit. Bahar matches the right digit.
+ * Older single-digit bets with no side keep the Bahar comparison.
  * @param {number | null | undefined} pickedNumber
  * @param {string} result
+ * @param {'andar' | 'bahar' | null | undefined} digitSide
  */
-export function payoutMultiplier(pickedNumber, result) {
+export function payoutMultiplier(pickedNumber, result, digitSide = null) {
   if (pickedNumber == null || !/^\d{2}$/.test(result)) {
     return 0;
   }
@@ -547,8 +570,11 @@ export function payoutMultiplier(pickedNumber, result) {
     return TWO_DIGIT_MULTIPLIER;
   }
 
-  if (pickedNumber >= 1 && pickedNumber <= 9 && pickedNumber === Number(result[1])) {
-    return ONE_DIGIT_MULTIPLIER;
+  if (pickedNumber >= 1 && pickedNumber <= 9) {
+    const resultDigit = digitSide === 'andar' ? result[0] : result[1];
+    if (pickedNumber === Number(resultDigit)) {
+      return ONE_DIGIT_MULTIPLIER;
+    }
   }
 
   return 0;
@@ -623,6 +649,7 @@ export async function declareMarketResult(marketId, result, options = {}) {
         userId: true,
         amount: true,
         pickedNumber: true,
+        digitSide: true,
         createdAt: true,
       },
     });
@@ -643,7 +670,7 @@ export async function declareMarketResult(marketId, result, options = {}) {
 
     for (const entry of entries) {
       totalBetAmount = totalBetAmount.add(entry.amount);
-      const multiplier = payoutMultiplier(entry.pickedNumber, result);
+      const multiplier = payoutMultiplier(entry.pickedNumber, result, entry.digitSide);
       const payout = multiplier === 0
         ? null
         : new Prisma.Decimal(entry.amount).mul(multiplier);

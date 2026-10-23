@@ -23,6 +23,7 @@ import {
   fetchJoinedMarketIds,
   fetchMarkets,
   getFeaturedMarket,
+  DigitSide,
   joinMarket,
   Market,
   toDisplayMarket,
@@ -55,6 +56,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
   const [loadError, setLoadError] = useState('');
   const [isPickingNumber, setIsPickingNumber] = useState(false);
   const [pickValue, setPickValue] = useState('');
+  const [digitSide, setDigitSide] = useState<DigitSide | null>(null);
   const [amountValue, setAmountValue] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
@@ -119,6 +121,7 @@ console.log("Markets", markets);
   const resetBetForm = () => {
     setIsPickingNumber(false);
     setPickValue('');
+    setDigitSide(null);
     setAmountValue('');
     setJoinError('');
   };
@@ -152,6 +155,7 @@ console.log("Markets", markets);
       if (isPickingNumber) {
         setIsPickingNumber(false);
         setPickValue('');
+        setDigitSide(null);
         setAmountValue('');
         setJoinError('');
         return true;
@@ -169,9 +173,17 @@ console.log("Markets", markets);
     if (!activeMarket || isJoining) return;
 
     const number = Number(pickValue);
+    const isSingleDigit = number >= 1 && number <= 9;
     if (!Number.isInteger(number) || number < 1 || number > 99) {
       showMessage({
         message: 'Enter a number from 1 to 99.',
+        type: 'danger',
+      });
+      return;
+    }
+    if (isSingleDigit && digitSide == null) {
+      showMessage({
+        message: 'Choose Andar or Bahar for a single digit.',
         type: 'danger',
       });
       return;
@@ -194,7 +206,12 @@ console.log("Markets", markets);
     setIsJoining(true);
     setJoinError('');
     try {
-      const entry = await joinMarket(activeMarket.id, number, amount);
+      const entry = await joinMarket(
+        activeMarket.id,
+        number,
+        amount,
+        isSingleDigit ? digitSide ?? undefined : undefined,
+      );
       setJoinedIds(current =>
         current.includes(entry.marketId) ? current : [...current, entry.marketId],
       );
@@ -213,7 +230,11 @@ console.log("Markets", markets);
       setSelectedMarket(null);
       resetBetForm();
       showMessage({
-        message: `Bet of ₹${entry.entryAmount} placed on ${activeMarket.name} with number ${number}.`,
+        message: `Bet of ₹${entry.entryAmount} placed on ${activeMarket.name} with number ${number}${
+          isSingleDigit && digitSide
+            ? ` (${digitSide === 'andar' ? 'Andar' : 'Bahar'})`
+            : ''
+        }.`,
         type: 'success',
       });
     } catch (error) {
@@ -527,17 +548,66 @@ console.log("Markets", markets);
                   mode="outlined"
                   label="Your number"
                   value={pickValue}
-                  onChangeText={value =>
-                    setPickValue(value.replace(/\D/g, '').slice(0, 2))
-                  }
+                  onChangeText={value => {
+                    const next = value.replace(/\D/g, '').slice(0, 2);
+                    const nextNumber = Number(next);
+                    setPickValue(next);
+                    if (
+                      next.length === 0 ||
+                      !Number.isInteger(nextNumber) ||
+                      nextNumber < 1 ||
+                      nextNumber > 9
+                    ) {
+                      setDigitSide(null);
+                    }
+                  }}
                   keyboardType="number-pad"
                   maxLength={2}
                   disabled={isJoining}
                   style={styles.numberInput}
                 />
                 <Text variant="bodySmall" style={styles.numberHint}>
-                  Enter a number from 1 to 99.
+                  Enter a number from 1 to 99. For a single digit, choose Andar
+                  or Bahar.
                 </Text>
+                {Number(pickValue) >= 1 && Number(pickValue) <= 9 ? (
+                  <View style={styles.sideRow}>
+                    <Button
+                      mode="outlined"
+                      style={[
+                        styles.sideButton,
+                        digitSide === 'andar' && styles.sideButtonSelected,
+                      ]}
+                      buttonColor={
+                        digitSide === 'andar' ? colors.blueSoft : colors.white
+                      }
+                      textColor={
+                        digitSide === 'andar' ? colors.primary : colors.text
+                      }
+                      disabled={isJoining}
+                      onPress={() => setDigitSide('andar')}
+                    >
+                      Andar
+                    </Button>
+                    <Button
+                      mode="outlined"
+                      style={[
+                        styles.sideButton,
+                        digitSide === 'bahar' && styles.sideButtonSelected,
+                      ]}
+                      buttonColor={
+                        digitSide === 'bahar' ? colors.blueSoft : colors.white
+                      }
+                      textColor={
+                        digitSide === 'bahar' ? colors.primary : colors.text
+                      }
+                      disabled={isJoining}
+                      onPress={() => setDigitSide('bahar')}
+                    >
+                      Bahar
+                    </Button>
+                  </View>
+                ) : null}
                 <TextInput
                   mode="outlined"
                   label="Bet amount (₹)"
@@ -571,7 +641,12 @@ console.log("Markets", markets);
                     style={styles.betAction}
                     loading={isJoining}
                     disabled={
-                      isJoining || pickValue.length < 1 || amountValue.length < 1
+                      isJoining ||
+                      pickValue.length < 1 ||
+                      amountValue.length < 1 ||
+                      (Number(pickValue) >= 1 &&
+                        Number(pickValue) <= 9 &&
+                        digitSide == null)
                     }
                     onPress={placeBet}
                   >

@@ -324,7 +324,13 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                 <View style={styles.stat}>
                   <Text style={styles.statLabel}>Your number</Text>
                   <Text style={styles.numberValue}>
-                    {order.pickedNumber ?? '—'}
+                    {order.pickedNumber == null
+                      ? '—'
+                      : order.digitSide
+                        ? `${order.pickedNumber} · ${
+                            order.digitSide === 'andar' ? 'Andar' : 'Bahar'
+                          }`
+                        : order.pickedNumber}
                   </Text>
                 </View>
                 <View style={styles.stat}>

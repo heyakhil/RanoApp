@@ -28,8 +28,8 @@ export default function Recharge() {
   const [reviewingId, setReviewingId] = useState('')
   const [error, setError] = useState('')
 
-  const loadRequests = useCallback(async () => {
-    setIsLoading(true)
+  const loadRequests = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setIsLoading(true)
     setError('')
 
     try {
@@ -41,13 +41,18 @@ export default function Recharge() {
     } catch (loadError) {
       setError(loadError.message || 'Unable to load recharge requests.')
     } finally {
-      setIsLoading(false)
+      if (!silent) setIsLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(loadRequests, 0)
-    return () => window.clearTimeout(timeoutId)
+    const timeoutId = window.setTimeout(() => loadRequests(), 0)
+    const refreshQuietly = () => loadRequests({ silent: true })
+    window.addEventListener('recharges-updated', refreshQuietly)
+    return () => {
+      window.clearTimeout(timeoutId)
+      window.removeEventListener('recharges-updated', refreshQuietly)
+    }
   }, [loadRequests])
 
   const review = async (id, decision) => {
@@ -77,7 +82,7 @@ export default function Recharge() {
             Review payment screenshots and credit approved amounts to wallets.
           </p>
         </div>
-        <Button color="light" size="sm" onClick={loadRequests} disabled={isLoading}>
+        <Button color="light" size="sm" onClick={() => loadRequests()} disabled={isLoading}>
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>

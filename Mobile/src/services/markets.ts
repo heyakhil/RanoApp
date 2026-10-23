@@ -29,11 +29,14 @@ export interface Market extends ApiMarket {
   joined: boolean;
 }
 
+export type DigitSide = 'andar' | 'bahar';
+
 export interface MarketJoinResult {
   marketId: string;
   roundNumber: number;
   entryAmount: number;
   pickedNumber: number;
+  digitSide: DigitSide | null;
   participants: number;
   maxParticipants: number;
   walletBalance: string;
@@ -89,6 +92,7 @@ export interface UserOrder {
   imageUrl: string;
   entryAmount: number;
   pickedNumber: number | null;
+  digitSide?: DigitSide | null;
   payoutAmount: number | null;
   roundNumber: number;
   participants: number;
@@ -160,10 +164,11 @@ export async function joinMarket(
   marketId: string,
   number: number,
   amount: number,
+  side?: DigitSide,
 ): Promise<MarketJoinResult> {
   const response = await apiClient.post<MarketJoinResult>(
     `/markets/${encodeURIComponent(marketId)}/join`,
-    { number, amount },
+    side ? { number, amount, side } : { number, amount },
   );
 
   if (!response.success || !response.data) {

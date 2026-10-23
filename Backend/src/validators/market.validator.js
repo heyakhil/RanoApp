@@ -78,10 +78,21 @@ export const declareResultSchema = z.object({
   result: z.string().trim().min(1).max(120),
 });
 
-export const joinMarketSchema = z.object({
-  number: z.number().int().min(1).max(99),
-  amount: money,
-});
+export const joinMarketSchema = z
+  .object({
+    number: z.number().int().min(1).max(99),
+    amount: money,
+    side: z.enum(['andar', 'bahar']).optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.number <= 9 && body.side === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Choose Andar or Bahar for a single-digit number',
+        path: ['side'],
+      });
+    }
+  });
 
 export const resultHistoryQuerySchema = z
   .object({

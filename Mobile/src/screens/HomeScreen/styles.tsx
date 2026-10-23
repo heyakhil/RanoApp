@@ -183,6 +183,12 @@ export const styles = StyleSheet.create({
   numberHint: { color: colors.textSecondary, lineHeight: 18 },
   betActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
   betAction: { flex: 1 },
+  sideRow: { flexDirection: 'row', gap: 10 },
+  sideButton: { flex: 1, borderColor: colors.border },
+  sideButtonSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.blueSoft,
+  },
   rightHeader:{
     flexDirection: 'row',
     alignItems: 'center',

@@ -21,6 +21,7 @@ import {
   ArrowDownToLine,
   Settings,
 } from 'lucide-react'
+import RechargeAlertBell from '../components/RechargeAlertBell'
 import { useAuth } from '../context/AuthContext'
 
 const navItems = [
@@ -139,13 +140,17 @@ export default function DashboardLayout() {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">
-              <button
-                type="button"
-                className="rounded-lg p-2 text-gray-600 hover:bg-gray-100"
-                aria-label="Notifications"
-              >
-                <Bell className="h-5 w-5" />
-              </button>
+              {isSubadmin ? (
+                <button
+                  type="button"
+                  className="rounded-lg p-2 text-gray-600 hover:bg-gray-100"
+                  aria-label="Notifications"
+                >
+                  <Bell className="h-5 w-5" />
+                </button>
+              ) : (
+                <RechargeAlertBell />
+              )}
 
               <div className="hidden items-center gap-2 sm:flex">
                 <Avatar rounded placeholderInitials={(user?.name || 'A').slice(0, 1)} />

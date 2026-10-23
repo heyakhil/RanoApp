@@ -65,6 +65,7 @@ export const joinMarket = asyncHandler(async (req, res) => {
     req.params.id,
     req.body.number,
     req.body.amount,
+    req.body.side ?? null,
   );
   return sendSuccess(res, 201, entry, 'Bet placed');
 });

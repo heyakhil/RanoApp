@@ -36,6 +36,11 @@ enum MarketRoundStatus {
   canceled
 }
 
+enum DigitSide {
+  andar
+  bahar
+}
+
 model User {
   id                String              @id @default(cuid())
   firebaseUid       String              @unique @map("firebase_uid") @db.VarChar(128)
@@ -151,6 +156,7 @@ model MarketEntry {
   userId       String   @map("user_id")
   amount       Decimal  @db.Decimal(12, 2)
   pickedNumber Int?     @map("picked_number")
+  digitSide    DigitSide? @map("digit_side")
   payoutAmount Decimal? @map("payout_amount") @db.Decimal(12, 2)
   createdAt    DateTime @default(now()) @map("created_at")
   market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
