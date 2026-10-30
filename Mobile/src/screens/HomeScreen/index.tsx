@@ -107,7 +107,6 @@ console.log("Markets", markets);
     ? displayMarkets.find(market => market.id === selectedMarket.id) ??
       selectedMarket
     : null;
-  const hasJoined = activeMarket ? joinedIds.includes(activeMarket.id) : false;
   const isFull = activeMarket
     ? activeMarket.participants >= activeMarket.capacity
     : false;
@@ -115,8 +114,7 @@ console.log("Markets", markets);
     activeMarket !== null &&
     walletBalance !== null &&
     walletBalance >= activeMarket.minBetAmount;
-  const canJoin =
-    activeMarket?.status === 'open' && !hasJoined && !isFull && canAfford;
+  const canJoin = activeMarket?.status === 'open' && !isFull && canAfford;
 
   const resetBetForm = () => {
     setIsPickingNumber(false);
@@ -249,17 +247,15 @@ console.log("Markets", markets);
 
   const joinLabel = !activeMarket
     ? 'Join market'
-    : hasJoined
-      ? 'Already bet this round'
-      : activeMarket.status === 'upcoming'
-        ? 'Market has not opened'
-        : activeMarket.status === 'closed'
-          ? 'Market is closed'
-          : isFull
-            ? 'Market is full'
-            : !canAfford
-              ? 'Insufficient wallet balance'
-              : 'Place bet';
+    : activeMarket.status === 'upcoming'
+      ? 'Market has not opened'
+      : activeMarket.status === 'closed'
+        ? 'Market is closed'
+        : isFull
+          ? 'Market is full'
+          : !canAfford
+            ? 'Insufficient wallet balance'
+            : 'Place bet';
 
   return (
     <ScreenLayout showHeader={false}>

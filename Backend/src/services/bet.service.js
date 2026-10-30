@@ -441,21 +441,21 @@ export async function joinMarket(userId, marketId, pickedNumber, amount, digitSi
     }
     const betAmount = new Prisma.Decimal(amount).toDecimalPlaces(2);
 
-    try {
-      await tx.marketParticipation.create({
-        data: {
+    await tx.marketParticipation.upsert({
+      where: {
+        marketId_roundNumber_userId: {
           marketId,
           roundNumber: market.currentRound,
           userId,
         },
-      });
-    } catch (error) {
-      if (error?.code === 'P2002') {
-        throw new ApiError(409, 'You have already bet in this market round', 'ALREADY_JOINED');
-      }
-
-      throw error;
-    }
+      },
+      create: {
+        marketId,
+        roundNumber: market.currentRound,
+        userId,
+      },
+      update: {},
+    });
 
     const reserved = await tx.market.updateMany({
       where: {
@@ -694,18 +694,25 @@ export async function declareMarketResult(marketId, result, options = {}) {
     }
 
     if (winners.length > 0) {
+      const payoutByUser = new Map();
+      for (const winner of winners) {
+        const current = payoutByUser.get(winner.userId) ?? new Prisma.Decimal(0);
+        payoutByUser.set(winner.userId, current.add(winner.payout));
+      }
+      const userPayouts = [...payoutByUser.entries()];
+
       await tx.$executeRaw`
         UPDATE users
         SET wallet_balance = CASE id
           ${Prisma.join(
-            winners.map(
-              (winner) =>
-                Prisma.sql`WHEN ${winner.userId} THEN wallet_balance + ${winner.payout}`,
+            userPayouts.map(
+              ([userId, payout]) =>
+                Prisma.sql`WHEN ${userId} THEN wallet_balance + ${payout}`,
             ),
           )}
           ELSE wallet_balance
         END
-        WHERE id IN (${Prisma.join(winners.map((winner) => winner.userId))})
+        WHERE id IN (${Prisma.join(userPayouts.map(([userId]) => userId))})
       `;
       await tx.$executeRaw`
         UPDATE market_entries

@@ -119,7 +119,7 @@ test('features the next market and lists each API market only once', async () =>
   await ReactTestRenderer.act(() => renderer.unmount());
 });
 
-test('allows one bet per market and lets the user bet in another market', async () => {
+test('lets the user bet again in the same market and in another market', async () => {
   (apiClient.post as jest.Mock).mockImplementation((path: string) => {
     const marketId = path.split('/')[2];
     const entryAmount = marketId === 'market-1' ? 30 : 50;
@@ -178,26 +178,11 @@ test('allows one bet per market and lets the user bet in another market', async 
   await placeBet('market-1', 30);
   expect(apiClient.post).toHaveBeenCalledTimes(1);
 
-  const alreadyBetCard = renderer.root
-    .findAllByType(MarketCard)
-    .find(card => card.props.market.id === 'market-1');
-  expect(alreadyBetCard?.props.market.joined).toBe(true);
-
-  const firstMarketCard = renderer.root
-    .findAllByType(MarketCard)
-    .find(card => card.props.market.id === 'market-1');
-  await ReactTestRenderer.act(() => firstMarketCard?.props.onPress());
-  expect(
-    renderer.root
-      .findAllByType(Button)
-      .some(button => button.props.children === 'Already bet this round'),
-  ).toBe(true);
-  await ReactTestRenderer.act(() =>
-    renderer.root.findByProps({ accessibilityLabel: 'Close market details' }).props.onPress(),
-  );
+  await placeBet('market-1', 30);
+  expect(apiClient.post).toHaveBeenCalledTimes(2);
 
   await placeBet('market-2', 50);
-  expect(apiClient.post).toHaveBeenCalledTimes(2);
+  expect(apiClient.post).toHaveBeenCalledTimes(3);
   expect(apiClient.post).toHaveBeenNthCalledWith(
     1,
     '/markets/market-1/join',
@@ -205,6 +190,11 @@ test('allows one bet per market and lets the user bet in another market', async 
   );
   expect(apiClient.post).toHaveBeenNthCalledWith(
     2,
+    '/markets/market-1/join',
+    { number: 12, amount: 30 },
+  );
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    3,
     '/markets/market-2/join',
     { number: 12, amount: 50 },
   );

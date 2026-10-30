@@ -192,7 +192,7 @@ function ChangePasswordSettings() {
         </Alert>
       ) : null}
 
-      {/* <Card className="border border-gray-100 shadow-sm">
+      <Card className="border border-gray-100 shadow-sm">
         <form className="space-y-5" onSubmit={save}>
           <div>
             <Label htmlFor="current-password">Current password</Label>
@@ -235,7 +235,7 @@ function ChangePasswordSettings() {
             </Button>
           </div>
         </form>
-      </Card> */}
+      </Card> 
     </section>
   )
 }
