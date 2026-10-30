@@ -71,7 +71,7 @@ test('shows the result deadline from the round date instead of the next daily cl
 
   const rendered = renderedText(renderer);
   expect(rendered).toContain('1 Jan');
-  expect(rendered).toContain('Cancellation pending');
+  expect(rendered).toContain('Waiting For Result');
 
   await ReactTestRenderer.act(() => renderer.unmount());
 });

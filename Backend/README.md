@@ -100,16 +100,19 @@ cron to call `POST /api/v1/markets/results/settle` **every minute**, with the
 Finance `market/get-market-time?region=...` for the market's country, validates the
 returned close timestamp, and persists it for the session. `RAPIDAPI_KEY` is
 required. `YAHOO_MARKET_TIME_URL` can override the endpoint URL. Until a valid
-close is stored, betting is closed. To fit RapidAPI Basic, a market makes at
+API close is stored and verified, betting and settlement are closed. Existing
+closes carried over from the old manual schedule are re-fetched after the
+verification migration. To fit RapidAPI Basic, a market makes at
 most one market-time request per India day. A failed fetch keeps betting closed
 for that session. Betting stops `BET_CUTOFF_MINUTES` before
 the persisted close (15 minutes by default), enforced by the backend. At the
-close, the cron fetches quotes and settles the result. It makes at most two
+API close plus `RESULT_DELAY_MINUTES` (0 by default), the cron fetches quotes
+and settles the result. It makes at most two
 quote requests per market round, at least five minutes apart.
-`RESULT_DELAY_MINUTES` (0 by default) can defer settlement. If no quote can be fetched, it retries
+If no quote can be fetched, it retries
 until `RESULT_WAIT_MINUTES` (15 by default) has elapsed, then cancels and
 refunds the round and reverses its commissions. An unsettled session's close
-time is never replaced by the next session's schedule. Apply the included
+time is never replaced by the next session's schedule once verified. Apply the included
 Prisma migration before deploying these changes.
 
 Withdrawal amounts are reserved from the user's wallet when a request is

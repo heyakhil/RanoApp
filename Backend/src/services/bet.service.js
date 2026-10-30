@@ -33,6 +33,12 @@ function settlementDate(now = new Date()) {
   return new Date(`${formatted}T00:00:00.000Z`);
 }
 
+// The market-time API close is an instant; apply the configured delay to it.
+export function scheduledResultAt(market) {
+  if (!market.sessionCloseAt) return null;
+  return new Date(market.sessionCloseAt.getTime() + env.resultDelayMinutes * 60_000);
+}
+
 function uniqueConstraint(error) {
   if (error?.code !== 'P2002') return '';
   const target = error.meta?.target;
@@ -52,7 +58,7 @@ export function splitCommission(betAmount) {
 }
 
 export function canPlaceBet(market, now = new Date()) {
-  if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
+  if (!market.sessionOpenAt || !market.sessionCloseAt || !market.sessionCloseVerified) return false;
   if (market.lastSettledClose && market.lastSettledClose >= market.sessionCloseAt) return false;
   return now >= market.sessionOpenAt &&
     now.getTime() < market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000;
@@ -138,11 +144,11 @@ export function toPublicMarket(market, totals, lastResultAt = null) {
     symbol: market.symbol,
     imageUrl: market.imageUrl ?? '',
     openTime: market.openTime,
-    closeTime: market.closeTime,
+    closeTime: market.sessionCloseVerified ? market.closeTime : null,
     countryCode: market.countryCode,
     sessionOpenAt: market.sessionOpenAt,
-    sessionCloseAt: market.sessionCloseAt,
-    bettingClosesAt: market.sessionCloseAt &&
+    sessionCloseAt: market.sessionCloseVerified ? market.sessionCloseAt : null,
+    bettingClosesAt: market.sessionCloseVerified && market.sessionCloseAt &&
       (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt)
       ? new Date(market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000)
       : null,
@@ -245,16 +251,7 @@ export async function listUserOrders(userId, { page, pageSize }) {
         round.marketId === entry.marketId && round.roundNumber === entry.roundNumber,
     );
     const isLiveRound = entry.roundNumber === entry.market.currentRound && !exactRound;
-    const betDate = indiaDateKey(entry.createdAt);
-    const settled =
-      exactRound ??
-      (isLiveRound
-        ? undefined
-        : rounds.find(
-            (round) =>
-              round.marketId === entry.marketId &&
-              indiaDateKey(round.settledOn) === betDate,
-          ));
+    const settled = exactRound;
     const isCurrentRound = isLiveRound;
     const liveCount = grouped.find(
       (group) =>
@@ -263,8 +260,12 @@ export async function listUserOrders(userId, { page, pageSize }) {
     const participants = isCurrentRound
       ? liveCount?._count._all ?? 0
       : settled?.participantCount ?? liveCount?._count._all ?? 0;
-    const scheduledResultAt = settled?.sessionCloseAt ??
-      (isLiveRound ? entry.market.sessionCloseAt : null);
+    const resultAt = (settled || entry.market.sessionCloseVerified) ? scheduledResultAt({
+      sessionOpenAt: isLiveRound ? entry.market.sessionOpenAt :
+        settled?.sessionOn ?? entry.createdAt,
+      sessionCloseAt: settled?.sessionCloseAt ??
+        (isLiveRound ? entry.market.sessionCloseAt : null),
+    }) : null;
 
     return {
       id: entry.id,
@@ -282,12 +283,10 @@ export async function listUserOrders(userId, { page, pageSize }) {
       openTime: entry.market.openTime,
       closeTime: entry.market.closeTime,
       result: settled?.result ?? null,
-      roundStatus: settled?.status ?? (isLiveRound ? 'pending' : 'settled'),
+      roundStatus: settled?.status ?? 'pending',
       isCurrentRound,
       createdAt: entry.createdAt,
-      scheduledResultAt: scheduledResultAt
-        ? new Date(scheduledResultAt.getTime() + env.resultDelayMinutes * 60_000).toISOString()
-        : null,
+      scheduledResultAt: resultAt?.toISOString() ?? null,
     };
   });
 
@@ -459,8 +458,8 @@ export async function joinMarket(userId, marketId, pickedNumber, amount, digitSi
 
 export function isResultDue(market, now = new Date()) {
   const close = market.sessionCloseAt;
-  if (!close || !market.sessionOpenAt) return false;
-  const dueAt = close.getTime() + env.resultDelayMinutes * 60 * 1000;
+  if (!close || !market.sessionOpenAt || !market.sessionCloseVerified) return false;
+  const dueAt = scheduledResultAt(market).getTime();
 
   if (now.getTime() < dueAt) {
     return false;
@@ -524,6 +523,7 @@ async function notifyDeclaredResult(marketName, result, alerts) {
 
 export async function declareMarketResult(marketId, result, options = {}) {
   const closeAt = options.closeAt ?? null;
+  const now = options.now ?? new Date();
 
   let outcome;
   try {
@@ -532,6 +532,10 @@ export async function declareMarketResult(marketId, result, options = {}) {
 
     if (!market) {
       throw new ApiError(404, 'Market not found', 'MARKET_NOT_FOUND');
+    }
+
+    if (!isResultDue(market, now)) {
+      throw new ApiError(409, 'This market result is not due yet', 'MARKET_RESULT_NOT_DUE');
     }
 
     if (closeAt) {
@@ -548,7 +552,7 @@ export async function declareMarketResult(marketId, result, options = {}) {
       }
     }
 
-    const settledOn = settlementDate();
+    const settledOn = settlementDate(now);
     const alreadySettledToday = await tx.marketRound.findFirst({
       where: { marketId, settledOn },
       select: { id: true },
@@ -920,9 +924,8 @@ export async function settleDueMarkets(now = new Date()) {
           (quoteReady.has(market.id)
             ? 'No regularMarketPrice was returned by the quote provider'
             : 'Waiting for the next quote retry or retry limit reached');
-        const cancelAt =
-          market.closeAt.getTime() +
-          (env.resultDelayMinutes + env.resultWaitMinutes) * 60 * 1000;
+        const cancelAt = scheduledResultAt(market).getTime() +
+          env.resultWaitMinutes * 60_000;
         if (now.getTime() < cancelAt) {
           skipped.push({
             marketId: market.id,
@@ -952,6 +955,7 @@ export async function settleDueMarkets(now = new Date()) {
           closeAt: market.closeAt,
           price: quote.regularMarketPrice,
           notify: false,
+          now,
         });
       } catch (error) {
         if (!(error instanceof ApiError) || error.code !== 'MARKET_RESULT_EXISTS') {

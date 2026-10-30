@@ -73,7 +73,16 @@ export async function syncOpenedMarketSessions(now = new Date()) {
   const current = parts(now);
   const today = `${current.year}-${current.month}-${current.day}`;
   const currentClock = `${current.hour}:${current.minute}`;
+  const needsVerification = (market) => Boolean(
+    market.sessionCloseAt && !market.sessionCloseVerified &&
+    (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt),
+  );
   const due = markets.filter((market) => {
+    if (needsVerification(market)) {
+      return market.sessionOpenAt && now >= market.sessionOpenAt &&
+        now.getTime() - market.sessionOpenAt.getTime() < 24 * 60 * 60 * 1000 &&
+        shouldFetchMarketTime(market.closeVerificationAttemptAt, now);
+    }
     if (market.openTime > currentClock) return false;
     // One market-time request per market per India day keeps Basic-plan usage bounded.
     if (!shouldFetchMarketTime(market.lastCloseFetchAt, now)) return false;
@@ -86,7 +95,8 @@ export async function syncOpenedMarketSessions(now = new Date()) {
   const reserved = await Promise.all(due.map(async (market) => {
     const result = await prisma.market.updateMany({
       where: { id: market.id, lastCloseFetchAt: market.lastCloseFetchAt },
-      data: { lastCloseFetchAt: now },
+      data: { lastCloseFetchAt: now,
+        ...(needsVerification(market) ? { closeVerificationAttemptAt: now } : {}) },
     });
     return result.count ? market : null;
   }));
@@ -104,7 +114,9 @@ export async function syncOpenedMarketSessions(now = new Date()) {
   const skipped = [];
   for (const market of claimed) {
     const closeAt = closeByCountry.get(market.countryCode);
-    const openAt = new Date(`${today}T${market.openTime}:00+05:30`);
+    const openAt = needsVerification(market)
+      ? market.sessionOpenAt
+      : new Date(`${today}T${market.openTime}:00+05:30`);
     if (!closeAt || closeAt <= openAt || closeAt.getTime() - openAt.getTime() > 24 * 60 * 60 * 1000) {
       skipped.push({ marketId: market.id,
         reason: errorsByCountry.get(market.countryCode) ?? 'Market time API returned no close for this session' });
@@ -116,6 +128,7 @@ export async function syncOpenedMarketSessions(now = new Date()) {
         lastCloseFetchAt: now, sessionOpenAt: market.sessionOpenAt,
         sessionCloseAt: market.sessionCloseAt },
       data: { sessionOpenAt: openAt, sessionCloseAt: closeAt,
+        sessionCloseVerified: true,
         closeTime: `${closeParts.hour}:${closeParts.minute}`,
         quoteFetchAttempts: 0, lastQuoteFetchAt: null },
     });

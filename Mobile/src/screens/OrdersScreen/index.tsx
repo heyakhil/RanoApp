@@ -39,17 +39,19 @@ function formatClock(totalSeconds: number): string {
     .join(':');
 }
 
-function resultMoment(order: UserOrder): Date {
-  return new Date(order.scheduledResultAt ?? order.createdAt);
+function resultMoment(order: UserOrder): Date | null {
+  return order.scheduledResultAt ? new Date(order.scheduledResultAt) : null;
 }
 
 function formatResultTime(order: UserOrder): string {
+  const moment = resultMoment(order);
+  if (!moment) return 'Pending schedule';
   return new Intl.DateTimeFormat('en-IN', {
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
     minute: '2-digit',
-  }).format(resultMoment(order));
+  }).format(moment);
 }
 
 function OrderStatusBar({ order }: { order: UserOrder }) {
@@ -120,19 +122,19 @@ function timeLeft(
     return { label: 'You Lost', value: 'Loss', tone: 'lost' };
   }
 
-  if (!order.isCurrentRound) {
+  if (order.roundStatus === 'settled') {
     return { label: 'Round status', value: 'Settled', tone: 'waiting' };
   }
 
-  const remainingMs =
-    resultMoment(order).getTime() - now.getTime();
+  const moment = resultMoment(order);
+  if (!moment) {
+    return { label: 'Round status', value: 'Waiting For Result', tone: 'waiting' };
+  }
+  const remainingMs = moment.getTime() - now.getTime();
   if (remainingMs <= 0) {
-    const waitingForResult =
-      now.getTime() - resultMoment(order).getTime() < 15 * 60 * 1000;
-
     return {
       label: 'Round status',
-      value: waitingForResult ? 'Waiting For Result' : 'Cancellation pending',
+      value: 'Waiting For Result',
       tone: 'waiting',
     };
   }
@@ -158,21 +160,28 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const loadingMoreRef = useRef(false);
   const allowNextPage = useRef(false);
 
-  const loadOrders = useCallback(async (page = 1, append = false) => {
+  const loadOrders = useCallback(async (page = 1, append = false, silent = false) => {
     if (append) {
       if (loadingMoreRef.current || !hasMoreRef.current) return;
       loadingMoreRef.current = true;
       setIsLoadingMore(true);
       setLoadMoreError('');
     } else {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       setError('');
     }
 
     try {
       const response = await fetchMyOrders(page);
       setOrders(current =>
-        append
+        silent
+          ? [
+              ...response.items,
+              ...current.filter(
+                item => !response.items.some(updated => updated.id === item.id),
+              ),
+            ]
+          : append
           ? [
               ...current,
               ...response.items.filter(
@@ -181,8 +190,10 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             ]
           : response.items,
       );
-      pageRef.current = page;
-      hasMoreRef.current = response.pagination.hasMore;
+      if (!silent) {
+        pageRef.current = page;
+        hasMoreRef.current = response.pagination.hasMore;
+      }
     } catch (loadError) {
       const message =
         loadError instanceof Error
@@ -190,7 +201,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           : 'Unable to load your orders.';
       if (append) {
         setLoadMoreError(message);
-      } else {
+      } else if (!silent) {
         setError(message);
       }
     } finally {
@@ -198,7 +209,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         loadingMoreRef.current = false;
         setIsLoadingMore(false);
       } else {
-        setIsLoading(false);
+        if (!silent) setIsLoading(false);
       }
     }
   }, []);
@@ -209,6 +220,14 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     hasMoreRef.current = false;
     loadOrders(1);
   }, [isActive, loadOrders]);
+
+  useEffect(() => {
+    if (!isActive || !orders.some(order => order.roundStatus === 'pending')) {
+      return undefined;
+    }
+    const interval = setInterval(() => loadOrders(1, false, true), 60_000);
+    return () => clearInterval(interval);
+  }, [isActive, orders, loadOrders]);
 
   const loadNextPage = () => {
     if (

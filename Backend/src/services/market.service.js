@@ -84,7 +84,9 @@ export async function updateMarket(id, input) {
       data: {
         ...input,
         ...(input.openTime !== undefined || input.countryCode !== undefined
-          ? { sessionOpenAt: null, sessionCloseAt: null, lastCloseFetchAt: null, closeTime: null }
+          ? { sessionOpenAt: null, sessionCloseAt: null,
+              sessionCloseVerified: false, closeVerificationAttemptAt: null,
+              lastCloseFetchAt: null, closeTime: null }
           : {}),
       },
     });

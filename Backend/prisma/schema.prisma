@@ -134,6 +134,8 @@ model Market {
   countryCode     String   @default("IN") @map("country_code") @db.VarChar(2)
   sessionOpenAt   DateTime? @map("session_open_at")
   sessionCloseAt  DateTime? @map("session_close_at")
+  sessionCloseVerified Boolean @default(false) @map("session_close_verified")
+  closeVerificationAttemptAt DateTime? @map("close_verification_attempt_at")
   lastCloseFetchAt DateTime? @map("last_close_fetch_at")
   quoteFetchAttempts Int @default(0) @map("quote_fetch_attempts")
   lastQuoteFetchAt DateTime? @map("last_quote_fetch_at")
