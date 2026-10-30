@@ -92,16 +92,25 @@ this limit even if a request bypasses the mobile app; existing bet records are
 kept when the participation guard is added.
 
 Market create, update, and delete endpoints require an admin JWT issued by
-`POST /api/v1/admin/login`; mobile user tokens cannot modify markets. Market
-times use 24-hour `HH:mm` values in Asia/Kolkata time. Configure an external
-cron to call `POST /api/v1/markets/results/settle` with the `X-Cron-Secret`
-header. After the configured `RESULT_DELAY_MINUTES` window (5 minutes by
-default), a round is eligible for settlement. The endpoint can settle it at any
-later time once a result quote is available. If no quote can be fetched, the
-round stays pending so a later call can retry; only after a further
-`RESULT_WAIT_MINUTES` (15 minutes by default) without a quote is it canceled,
-each player's bet refunded, and its commission reversed. New bets are blocked
-while a previous round is awaiting its result.
+`POST /api/v1/admin/login`; mobile user tokens cannot modify markets. Admins
+set an `openTime` in 24-hour Asia/Kolkata time and a two-letter `countryCode`
+(RapidAPI `region` value). They cannot set the close time. Configure an external
+cron to call `POST /api/v1/markets/results/settle` **every minute**, with the
+`X-Cron-Secret` header. At or after the configured open time, it calls Yahoo
+Finance `market/get-market-time?region=...` for the market's country, validates the
+returned close timestamp, and persists it for the session. `RAPIDAPI_KEY` is
+required. `YAHOO_MARKET_TIME_URL` can override the endpoint URL. Until a valid
+close is stored, betting is closed. To fit RapidAPI Basic, a market makes at
+most one market-time request per India day. A failed fetch keeps betting closed
+for that session. Betting stops `BET_CUTOFF_MINUTES` before
+the persisted close (15 minutes by default), enforced by the backend. At the
+close, the cron fetches quotes and settles the result. It makes at most two
+quote requests per market round, at least five minutes apart.
+`RESULT_DELAY_MINUTES` (0 by default) can defer settlement. If no quote can be fetched, it retries
+until `RESULT_WAIT_MINUTES` (15 by default) has elapsed, then cancels and
+refunds the round and reverses its commissions. An unsettled session's close
+time is never replaced by the next session's schedule. Apply the included
+Prisma migration before deploying these changes.
 
 Withdrawal amounts are reserved from the user's wallet when a request is
 submitted. Rejecting a request returns the reserved amount to the wallet;

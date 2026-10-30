@@ -9,7 +9,10 @@ export interface ApiMarket {
   name: string;
   imageUrl: string;
   openTime: string;
-  closeTime: string;
+  closeTime: string | null;
+  sessionOpenAt: string | null;
+  sessionCloseAt: string | null;
+  bettingClosesAt: string | null;
   maxParticipants: number;
   participants: number;
   minBetAmount: number;
@@ -51,9 +54,9 @@ const marketAccents = [
 ];
 
 function currentTimeString(date: Date): string {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(
-    date.getMinutes(),
-  ).padStart(2, '0')}`;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(date);
 }
 
 function formatTime(time: string): string {
@@ -99,12 +102,12 @@ export interface UserOrder {
   maxParticipants: number;
   seatsLeft: number;
   openTime: string;
-  closeTime: string;
+  closeTime: string | null;
   result: string | null;
   roundStatus: 'pending' | 'settled' | 'canceled';
   isCurrentRound: boolean;
   createdAt: string;
-  scheduledResultAt: string;
+  scheduledResultAt: string | null;
 }
 
 export interface ResultRound {
@@ -178,18 +181,12 @@ export async function joinMarket(
   return response.data;
 }
 
-function getMarketStatus(
-  openTime: string,
-  closeTime: string,
-  now: Date,
-): MarketStatus {
-  const currentTime = currentTimeString(now);
-  const crossesMidnight = closeTime < openTime;
-  const isOpen = crossesMidnight
-    ? currentTime >= openTime || currentTime < closeTime
-    : currentTime >= openTime && currentTime < closeTime;
-
-  return isOpen ? 'open' : currentTime < openTime ? 'upcoming' : 'closed';
+function getMarketStatus(market: ApiMarket, now: Date): MarketStatus {
+  if (market.sessionOpenAt && market.bettingClosesAt &&
+      now >= new Date(market.sessionOpenAt) && now < new Date(market.bettingClosesAt)) {
+    return 'open';
+  }
+  return currentTimeString(now) < market.openTime ? 'upcoming' : 'closed';
 }
 
 export function toDisplayMarket(
@@ -198,22 +195,15 @@ export function toDisplayMarket(
   now: Date,
   joined: boolean,
 ): Market {
-  const status = getMarketStatus(
-    market.openTime,
-    market.closeTime,
-    now,
-  );
-
-  console.log("Market Status ===>", status);
+  const status = getMarketStatus(market, now);
   const accent = marketAccents[index % marketAccents.length];
   return {
     ...market,
     status,
     joined,
     capacity: market.maxParticipants,
-    schedule: `${formatTime(market.openTime)} – ${formatTime(
-      market.closeTime,
-    )}`,
+    schedule: `${formatTime(market.openTime)} – ${market.closeTime
+      ? formatTime(market.closeTime) : 'Close time pending'}`,
     mark: market.name.charAt(0),
     accent: accent.accent,
     accentBackground: accent.background,
@@ -227,23 +217,11 @@ export function getFeaturedMarket(
   return markets
     .filter(market => market.status === 'open')
     .reduce<Market | undefined>((featured, market) => {
-      const [hours, minutes] = market.closeTime.split(':').map(Number);
-      const closesAt = new Date(now);
-      closesAt.setHours(hours, minutes, 0, 0);
-      if (closesAt <= now) {
-        closesAt.setDate(closesAt.getDate() + 1);
-      }
+      const closesAt = new Date(market.sessionCloseAt!);
 
       if (!featured) return market;
 
-      const [featuredHours, featuredMinutes] = featured.closeTime
-        .split(':')
-        .map(Number);
-      const featuredClosesAt = new Date(now);
-      featuredClosesAt.setHours(featuredHours, featuredMinutes, 0, 0);
-      if (featuredClosesAt <= now) {
-        featuredClosesAt.setDate(featuredClosesAt.getDate() + 1);
-      }
+      const featuredClosesAt = new Date(featured.sessionCloseAt!);
 
       return closesAt < featuredClosesAt ? market : featured;
     }, undefined);

@@ -130,7 +130,13 @@ model Market {
   symbol          String   @unique @db.VarChar(20)
   imageUrl        String   @default("") @map("image_url") @db.VarChar(1024)
   openTime        String   @map("open_time") @db.VarChar(5)
-  closeTime       String   @map("close_time") @db.VarChar(5)
+  closeTime       String?  @map("close_time") @db.VarChar(5)
+  countryCode     String   @default("IN") @map("country_code") @db.VarChar(2)
+  sessionOpenAt   DateTime? @map("session_open_at")
+  sessionCloseAt  DateTime? @map("session_close_at")
+  lastCloseFetchAt DateTime? @map("last_close_fetch_at")
+  quoteFetchAttempts Int @default(0) @map("quote_fetch_attempts")
+  lastQuoteFetchAt DateTime? @map("last_quote_fetch_at")
   maxParticipants Int      @map("max_participants")
   participants    Int      @default(0)
   minBetAmount    Decimal        @map("min_bet_amount") @db.Decimal(10, 2)
@@ -193,6 +199,7 @@ model MarketRound {
   settledAt        DateTime @default(now()) @map("settled_at")
   settledOn        DateTime @map("settled_on") @db.Date
   sessionOn        DateTime @map("session_on") @db.Date
+  sessionCloseAt   DateTime? @map("session_close_at")
   market           Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
   @@unique([marketId, roundNumber])

@@ -4,27 +4,10 @@ import { prisma } from '../config/prisma.js';
 import { ApiError } from '../utils/ApiError.js';
 import { notifyUser } from './notification.service.js';
 import { digitsAfterDecimal, fetchMarketQuotes } from './quote.service.js';
+import { syncOpenedMarketSessions } from './market-time.service.js';
 
 const TWO_DIGIT_MULTIPLIER = 70;
 const ONE_DIGIT_MULTIPLIER = 9;
-
-function toMinutes(time) {
-  const [hours, minutes] = time.split(':').map(Number);
-  return hours * 60 + minutes;
-}
-
-export function isMarketOpen(openTime, closeTime, now = new Date()) {
-  const parts = indiaDateTimeParts(now);
-  const current = Number(parts.hour) * 60 + Number(parts.minute);
-  const open = toMinutes(openTime);
-  const close = toMinutes(closeTime);
-
-  if (close < open) {
-    return current >= open || current < close;
-  }
-
-  return current >= open && current < close;
-}
 
 function moneyNumber(value) {
   return Math.round(Number(value ?? 0) * 100) / 100;
@@ -37,52 +20,6 @@ function indiaDateKey(value) {
     month: '2-digit',
     day: '2-digit',
   }).format(value);
-}
-
-function indiaDateTimeParts(value) {
-  return Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    })
-      .formatToParts(value)
-      .filter((part) => part.type !== 'literal')
-      .map(({ type, value: partValue }) => [type, partValue]),
-  );
-}
-
-function nextIndiaDate(dateKey) {
-  const [year, month, day] = dateKey.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
-}
-
-export function sessionCloseForEntry(openTime, closeTime, createdAt) {
-  const parts = indiaDateTimeParts(createdAt);
-  const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
-  const openMinutes = toMinutes(openTime);
-  const closeMinutes = toMinutes(closeTime);
-  let dateKey = `${parts.year}-${parts.month}-${parts.day}`;
-
-  if (closeMinutes < openMinutes && currentMinutes >= openMinutes) {
-    dateKey = nextIndiaDate(dateKey);
-  }
-
-  return new Date(`${dateKey}T${closeTime}:00+05:30`);
-}
-
-/** India date the session that closes at `closeAt` opened on. */
-function sessionDate(openTime, closeTime, closeAt) {
-  const closeDay = new Date(`${indiaDateKey(closeAt)}T00:00:00.000Z`);
-  if (toMinutes(closeTime) < toMinutes(openTime)) {
-    closeDay.setUTCDate(closeDay.getUTCDate() - 1);
-  }
-
-  return closeDay;
 }
 
 function settlementDate(now = new Date()) {
@@ -112,6 +49,18 @@ export function splitCommission(betAmount) {
     adminShare: adminPaise / 100,
     subadminShare: (commissionPaise - adminPaise) / 100,
   };
+}
+
+export function canPlaceBet(market, now = new Date()) {
+  if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
+  if (market.lastSettledClose && market.lastSettledClose >= market.sessionCloseAt) return false;
+  return now >= market.sessionOpenAt &&
+    now.getTime() < market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000;
+}
+
+export function shouldFetchQuote(market, now) {
+  return market.quoteFetchAttempts < 2 &&
+    (!market.lastQuoteFetchAt || now.getTime() - market.lastQuoteFetchAt.getTime() >= 5 * 60_000);
 }
 
 async function creditBetCommission(tx, entry) {
@@ -190,6 +139,13 @@ export function toPublicMarket(market, totals, lastResultAt = null) {
     imageUrl: market.imageUrl ?? '',
     openTime: market.openTime,
     closeTime: market.closeTime,
+    countryCode: market.countryCode,
+    sessionOpenAt: market.sessionOpenAt,
+    sessionCloseAt: market.sessionCloseAt,
+    bettingClosesAt: market.sessionCloseAt &&
+      (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt)
+      ? new Date(market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000)
+      : null,
     maxParticipants: market.maxParticipants,
     participants,
     minBetAmount: moneyNumber(market.minBetAmount),
@@ -280,7 +236,6 @@ export async function listUserOrders(userId, { page, pageSize }) {
       by: ['marketId', 'roundNumber'],
       where: { OR: roundKeys },
       _count: { _all: true },
-      _min: { createdAt: true },
     }),
   ]);
 
@@ -305,18 +260,11 @@ export async function listUserOrders(userId, { page, pageSize }) {
       (group) =>
         group.marketId === entry.marketId && group.roundNumber === entry.roundNumber,
     );
-    const roundStartedAt = liveCount?._min.createdAt ?? entry.createdAt;
     const participants = isCurrentRound
       ? liveCount?._count._all ?? 0
       : settled?.participantCount ?? liveCount?._count._all ?? 0;
-    const scheduledResultAt = new Date(
-      sessionCloseForEntry(
-        entry.market.openTime,
-        entry.market.closeTime,
-        roundStartedAt,
-      ).getTime() +
-        env.resultDelayMinutes * 60 * 1000,
-    );
+    const scheduledResultAt = settled?.sessionCloseAt ??
+      (isLiveRound ? entry.market.sessionCloseAt : null);
 
     return {
       id: entry.id,
@@ -337,7 +285,9 @@ export async function listUserOrders(userId, { page, pageSize }) {
       roundStatus: settled?.status ?? (isLiveRound ? 'pending' : 'settled'),
       isCurrentRound,
       createdAt: entry.createdAt,
-      scheduledResultAt: scheduledResultAt.toISOString(),
+      scheduledResultAt: scheduledResultAt
+        ? new Date(scheduledResultAt.getTime() + env.resultDelayMinutes * 60_000).toISOString()
+        : null,
     };
   });
 
@@ -385,11 +335,7 @@ async function rejectBetForUnsettledStaleRound(marketId, now = new Date()) {
     return;
   }
 
-  const closeAt = sessionCloseForEntry(
-    market.openTime,
-    market.closeTime,
-    firstEntry.createdAt,
-  );
+  const closeAt = market.sessionCloseAt;
   if (indiaDateKey(now) !== indiaDateKey(closeAt)) {
     throw new ApiError(
       409,
@@ -426,7 +372,7 @@ export async function joinMarket(userId, marketId, pickedNumber, amount, digitSi
       throw new ApiError(404, 'Market not found', 'MARKET_NOT_FOUND');
     }
 
-    if (!isMarketOpen(market.openTime, market.closeTime)) {
+    if (!canPlaceBet(market)) {
       throw new ApiError(400, 'This market is not open for joining', 'MARKET_NOT_OPEN');
     }
 
@@ -461,6 +407,8 @@ export async function joinMarket(userId, marketId, pickedNumber, amount, digitSi
       where: {
         id: marketId,
         currentRound: market.currentRound,
+        sessionOpenAt: market.sessionOpenAt,
+        sessionCloseAt: market.sessionCloseAt,
         participants: { lt: market.maxParticipants },
       },
       data: { participants: { increment: 1 } },
@@ -509,37 +457,9 @@ export async function joinMarket(userId, marketId, pickedNumber, amount, digitSi
   });
 }
 
-export function sessionClose(openTime, closeTime, now = new Date(), lastSettledClose = null) {
-  const parts = indiaDateTimeParts(now);
-  const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
-  const openMinutes = toMinutes(openTime);
-  const closeMinutes = toMinutes(closeTime);
-  let dateKey = `${parts.year}-${parts.month}-${parts.day}`;
-
-  if (closeTime < openTime && currentMinutes >= openMinutes) {
-    dateKey = nextIndiaDate(dateKey);
-  } else if (
-    closeTime < openTime &&
-    currentMinutes > closeMinutes &&
-    lastSettledClose &&
-    new Date(lastSettledClose).getTime() >=
-      new Date(`${dateKey}T${closeTime}:00+05:30`).getTime()
-  ) {
-    dateKey = nextIndiaDate(dateKey);
-  }
-
-  return new Date(`${dateKey}T${closeTime}:00+05:30`);
-}
-
-export function isResultDue(market, now = new Date(), roundStartedAt = null) {
-  const close = roundStartedAt
-    ? sessionCloseForEntry(market.openTime, market.closeTime, roundStartedAt)
-    : sessionClose(
-        market.openTime,
-        market.closeTime,
-        now,
-        market.lastSettledClose,
-      );
+export function isResultDue(market, now = new Date()) {
+  const close = market.sessionCloseAt;
+  if (!close || !market.sessionOpenAt) return false;
   const dueAt = close.getTime() + env.resultDelayMinutes * 60 * 1000;
 
   if (now.getTime() < dueAt) {
@@ -653,15 +573,10 @@ export async function declareMarketResult(marketId, result, options = {}) {
         createdAt: true,
       },
     });
-    const firstEntryAt = entries.reduce(
-      (first, entry) => (!first || entry.createdAt < first ? entry.createdAt : first),
-      null,
-    );
-    const sessionCloseAt =
-      closeAt ??
-      (firstEntryAt
-        ? sessionCloseForEntry(market.openTime, market.closeTime, firstEntryAt)
-        : sessionClose(market.openTime, market.closeTime, new Date(), market.lastSettledClose));
+    const sessionCloseAt = closeAt ?? market.sessionCloseAt;
+    if (!sessionCloseAt || !market.sessionOpenAt) {
+      throw new ApiError(409, 'Market session has no close time', 'MARKET_SESSION_UNAVAILABLE');
+    }
     let winnerCount = 0;
     let totalPayout = new Prisma.Decimal(0);
     let totalBetAmount = new Prisma.Decimal(0);
@@ -737,7 +652,8 @@ export async function declareMarketResult(marketId, result, options = {}) {
         participantCount,
         totalBetAmount,
         settledOn,
-        sessionOn: sessionDate(market.openTime, market.closeTime, sessionCloseAt),
+        sessionOn: settlementDate(market.sessionOpenAt),
+        sessionCloseAt,
       },
     });
 
@@ -747,7 +663,7 @@ export async function declareMarketResult(marketId, result, options = {}) {
         participants: 0,
         currentRound: { increment: 1 },
         lastResult: result,
-        ...(closeAt ? { lastSettledClose: closeAt } : {}),
+        lastSettledClose: sessionCloseAt,
       },
     });
 
@@ -875,7 +791,8 @@ async function cancelMarketRound(market, closeAt) {
         participantCount: entries.length,
         totalBetAmount: totalRefund,
         settledOn: settlementDate(closeAt),
-        sessionOn: sessionDate(market.openTime, market.closeTime, closeAt),
+        sessionOn: settlementDate(market.sessionOpenAt),
+        sessionCloseAt: closeAt,
       },
     });
     await tx.market.update({
@@ -897,50 +814,28 @@ async function cancelMarketRound(market, closeAt) {
 }
 
 export async function settleDueMarkets(now = new Date()) {
+  const { synced, skipped: syncSkipped } = await syncOpenedMarketSessions(now);
   const markets = await prisma.market.findMany();
   if (markets.length === 0) {
-    return { settled: [], canceled: [], skipped: [] };
-  }
-
-  const currentRoundEntries = await prisma.marketEntry.findMany({
-    where: {
-      OR: markets.map((market) => ({
-        marketId: market.id,
-        roundNumber: market.currentRound,
-      })),
-    },
-    orderBy: { createdAt: 'asc' },
-    select: { marketId: true, roundNumber: true, createdAt: true },
-  });
-  const firstEntryByRound = new Map();
-  for (const entry of currentRoundEntries) {
-    const key = `${entry.marketId}:${entry.roundNumber}`;
-    if (!firstEntryByRound.has(key)) {
-      firstEntryByRound.set(key, entry);
-    }
+    return { synced, syncSkipped, settled: [], canceled: [], skipped: [] };
   }
 
   const dueBySchedule = markets
     .map((market) => {
-      const firstEntry = firstEntryByRound.get(
-        `${market.id}:${market.currentRound}`,
-      );
       // Markets without bets still get a result for the current session.
-      if (!isResultDue(market, now, firstEntry?.createdAt ?? null)) {
+      if (!isResultDue(market, now)) {
         return null;
       }
 
       return {
         ...market,
-        closeAt: firstEntry
-          ? sessionCloseForEntry(market.openTime, market.closeTime, firstEntry.createdAt)
-          : sessionClose(market.openTime, market.closeTime, now, market.lastSettledClose),
+        closeAt: market.sessionCloseAt,
       };
     })
     .filter(Boolean);
 
   if (dueBySchedule.length === 0) {
-    return { settled: [], canceled: [], skipped: [] };
+    return { synced, syncSkipped, settled: [], canceled: [], skipped: [] };
   }
 
   const dueIds = dueBySchedule.map((market) => market.id);
@@ -977,19 +872,32 @@ export async function settleDueMarkets(now = new Date()) {
   );
 
   if (dueMarkets.length === 0) {
-    return { settled: [], canceled: [], skipped };
+    return { synced, syncSkipped, settled: [], canceled: [], skipped };
   }
 
   let quotes = [];
   let quoteFailure = null;
-  if (dueMarkets.length > 0) {
-    if (!env.rapidApiKey) {
-      quoteFailure = 'Market result API key is not configured';
-    } else {
+  const quoteReady = new Set();
+  if (!env.rapidApiKey) {
+    quoteFailure = 'Market result API key is not configured';
+  } else {
+    const candidates = await Promise.all(dueMarkets.map(async (market) => {
+      if (!shouldFetchQuote(market, now)) {
+        return null;
+      }
+      const reserved = await prisma.market.updateMany({
+        where: { id: market.id, currentRound: market.currentRound,
+          sessionCloseAt: market.sessionCloseAt,
+          quoteFetchAttempts: { lt: 2 }, lastQuoteFetchAt: market.lastQuoteFetchAt },
+        data: { quoteFetchAttempts: { increment: 1 }, lastQuoteFetchAt: now },
+      });
+      return reserved.count ? market : null;
+    }));
+    const selected = candidates.filter(Boolean);
+    selected.forEach((market) => quoteReady.add(market.id));
+    if (selected.length > 0) {
       try {
-        quotes = await fetchMarketQuotes(
-          dueMarkets.map((market) => market.symbol),
-        );
+        quotes = await fetchMarketQuotes(selected.map((market) => market.symbol));
       } catch (error) {
         quoteFailure = error.message;
         console.error('Market quote fetch failed', error);
@@ -1009,7 +917,9 @@ export async function settleDueMarkets(now = new Date()) {
       if (quoteFailure || !quote || quote.regularMarketPrice == null) {
         const reason =
           quoteFailure ??
-          'No regularMarketPrice was returned by the quote provider';
+          (quoteReady.has(market.id)
+            ? 'No regularMarketPrice was returned by the quote provider'
+            : 'Waiting for the next quote retry or retry limit reached');
         const cancelAt =
           market.closeAt.getTime() +
           (env.resultDelayMinutes + env.resultWaitMinutes) * 60 * 1000;
@@ -1084,7 +994,7 @@ export async function settleDueMarkets(now = new Date()) {
     );
   }
 
-  return { settled, canceled, skipped };
+  return { synced, syncSkipped, settled, canceled, skipped };
 }
 
 export async function listResultHistory(from, to, { page, pageSize }) {

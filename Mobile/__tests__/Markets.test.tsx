@@ -14,6 +14,9 @@ const mockApiMarkets = [
     imageUrl: '',
     openTime: '00:00',
     closeTime: '23:59',
+    sessionOpenAt: new Date(Date.now() - 60_000).toISOString(),
+    sessionCloseAt: new Date(Date.now() + 3_600_000).toISOString(),
+    bettingClosesAt: new Date(Date.now() + 3_000_000).toISOString(),
     maxParticipants: 500,
     participants: 326,
     minBetAmount: 25,
@@ -29,6 +32,9 @@ const mockApiMarkets = [
     imageUrl: '',
     openTime: '00:00',
     closeTime: '23:59',
+    sessionOpenAt: new Date(Date.now() - 60_000).toISOString(),
+    sessionCloseAt: new Date(Date.now() + 7_200_000).toISOString(),
+    bettingClosesAt: new Date(Date.now() + 6_300_000).toISOString(),
     maxParticipants: 250,
     participants: 0,
     minBetAmount: 50,
@@ -73,7 +79,7 @@ test('loads markets from the API and shows market details', async () => {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => {
     renderer = renderHomeScreen();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
   });
 
   expect(
@@ -91,7 +97,7 @@ test('features the next market and lists each API market only once', async () =>
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => {
     renderer = renderHomeScreen();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
   });
 
   const cards = renderer.root.findAllByType(MarketCard);
@@ -140,7 +146,7 @@ test('lets the user bet again in the same market and in another market', async (
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => {
     renderer = renderHomeScreen();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
   });
 
   const placeBet = async (marketId: string, amount: number) => {
@@ -171,7 +177,7 @@ test('lets the user bet again in the same market and in another market', async (
       .find(button => button.props.children === 'Confirm bet');
     await ReactTestRenderer.act(async () => {
       submitButton?.props.onPress();
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
     });
   };
 
@@ -207,11 +213,17 @@ test('features the open market with the closest closing time', () => {
     ...mockApiMarkets[0],
     openTime: '08:00',
     closeTime: '16:00',
+    sessionOpenAt: new Date(2026, 0, 1, 8).toISOString(),
+    sessionCloseAt: new Date(2026, 0, 1, 16).toISOString(),
+    bettingClosesAt: new Date(2026, 0, 1, 15, 45).toISOString(),
   };
   const closesSooner = {
     ...mockApiMarkets[1],
     openTime: '09:00',
     closeTime: '11:00',
+    sessionOpenAt: new Date(2026, 0, 1, 9).toISOString(),
+    sessionCloseAt: new Date(2026, 0, 1, 11).toISOString(),
+    bettingClosesAt: new Date(2026, 0, 1, 10, 45).toISOString(),
   };
   const displayMarkets = [
     toDisplayMarket(closesLater, 0, now, false),
@@ -236,11 +248,17 @@ test('features the open market closing soon across midnight', () => {
     ...mockApiMarkets[0],
     openTime: '22:00',
     closeTime: '02:00',
+    sessionOpenAt: new Date(2026, 0, 1, 22).toISOString(),
+    sessionCloseAt: new Date(2026, 0, 2, 2).toISOString(),
+    bettingClosesAt: new Date(2026, 0, 2, 1, 45).toISOString(),
   };
   const closesToday = {
     ...mockApiMarkets[1],
     openTime: '20:00',
     closeTime: '23:45',
+    sessionOpenAt: new Date(2026, 0, 1, 20).toISOString(),
+    sessionCloseAt: new Date(2026, 0, 1, 23, 45).toISOString(),
+    bettingClosesAt: new Date(2026, 0, 1, 23, 40).toISOString(),
   };
   const displayMarkets = [
     toDisplayMarket(closesTomorrow, 0, now, false),
@@ -257,8 +275,17 @@ test('market status follows its scheduled opening and closing times', () => {
     closeTime: '17:00',
     lastResult: '42',
     lastResultAt: new Date(2026, 0, 1, 17, 15).toISOString(),
+    sessionOpenAt: new Date(2026, 0, 1, 9).toISOString(),
+    sessionCloseAt: new Date(2026, 0, 1, 17).toISOString(),
+    bettingClosesAt: new Date(2026, 0, 1, 16, 45).toISOString(),
   };
 
+  expect(
+    toDisplayMarket(market, 0, new Date(2026, 0, 1, 10, 0), false).status,
+  ).toBe('open');
+  expect(
+    toDisplayMarket(market, 0, new Date(2026, 0, 1, 16, 45), false).status,
+  ).toBe('closed');
   expect(
     toDisplayMarket(market, 0, new Date(2026, 0, 1, 18, 0), false).status,
   ).toBe('closed');
@@ -267,8 +294,8 @@ test('market status follows its scheduled opening and closing times', () => {
   ).toBe('upcoming');
   expect(
     toDisplayMarket(market, 0, new Date(2026, 0, 2, 9, 0), false).status,
-  ).toBe('open');
+  ).toBe('closed');
   expect(
     toDisplayMarket(market, 0, new Date(2026, 0, 2, 10, 0), false).status,
-  ).toBe('open');
+  ).toBe('closed');
 });

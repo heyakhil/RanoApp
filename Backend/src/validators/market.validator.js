@@ -19,13 +19,12 @@ const marketFields = {
     .max(20)
     .transform((symbol) => symbol.toUpperCase()),
   openTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:mm time'),
-  closeTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:mm time'),
+  countryCode: z.string().trim().regex(/^[A-Za-z]{2}$/, 'Use a two-letter country code').transform((code) => code.toUpperCase()),
   maxParticipants: z.number().int().positive().max(2147483647),
   minBetAmount: money,
   maxBetAmount: money,
 };
 
-const validMarketHours = (market) => market.openTime !== market.closeTime;
 const betRangeMessage = {
   message: 'Maximum bet amount must be greater than or equal to the minimum',
   path: ['maxBetAmount'],
@@ -33,10 +32,6 @@ const betRangeMessage = {
 
 export const createMarketSchema = z
   .object(marketFields)
-  .refine(validMarketHours, {
-    message: 'Close time must differ from open time. An earlier close time is the next day.',
-    path: ['closeTime'],
-  })
   .refine((market) => market.minBetAmount <= market.maxBetAmount, betRangeMessage);
 
 export const updateMarketSchema = z
@@ -44,7 +39,7 @@ export const updateMarketSchema = z
     name: marketFields.name.optional(),
     symbol: marketFields.symbol.optional(),
     openTime: marketFields.openTime.optional(),
-    closeTime: marketFields.closeTime.optional(),
+    countryCode: marketFields.countryCode.optional(),
     maxParticipants: marketFields.maxParticipants.optional(),
     minBetAmount: marketFields.minBetAmount.optional(),
     maxBetAmount: marketFields.maxBetAmount.optional(),
@@ -52,16 +47,6 @@ export const updateMarketSchema = z
   .refine((market) => Object.keys(market).length > 0, {
     message: 'At least one market field must be provided',
   })
-  .refine(
-    (market) =>
-      market.openTime === undefined ||
-      market.closeTime === undefined ||
-      validMarketHours(market),
-    {
-      message: 'Close time must differ from open time. An earlier close time is the next day.',
-      path: ['closeTime'],
-    },
-  )
   .refine(
     (market) =>
       market.minBetAmount === undefined ||

@@ -61,7 +61,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isActive = true }) => {
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [now, setNow] = useState(() => new Date());
-console.log("Markets", markets);
   const loadMarkets = useCallback(async () => {
     setIsLoading(true);
     setLoadError('');
@@ -88,9 +87,13 @@ console.log("Markets", markets);
   }, [loadMarkets]);
 
   useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 60_000);
+    if (!isActive) return undefined;
+    const interval = setInterval(() => {
+      setNow(new Date());
+      void fetchMarkets().then(setMarkets).catch(() => {});
+    }, 60_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isActive]);
 
   const displayMarkets = markets.map((market, index) =>
     toDisplayMarket(market, index, now, joinedIds.includes(market.id)),
@@ -98,7 +101,6 @@ console.log("Markets", markets);
   const openCount = displayMarkets.filter(
     market => market.status === 'open',
   ).length;
-  console.log("Now ===>", now);
   const featured = getFeaturedMarket(displayMarkets, now);
   const remainingMarkets = displayMarkets.filter(
     market => market.id !== featured?.id,

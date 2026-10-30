@@ -17,7 +17,7 @@ const emptyMarket = {
   name: '',
   symbol: '',
   openTime: '09:15',
-  closeTime: '15:30',
+  countryCode: 'IN',
   maxParticipants: '100',
   minBetAmount: '10',
   maxBetAmount: '1000',
@@ -30,7 +30,7 @@ function toFormValues(market) {
     name: market.name,
     symbol: market.symbol,
     openTime: market.openTime,
-    closeTime: market.closeTime,
+    countryCode: market.countryCode,
     maxParticipants: String(market.maxParticipants),
     minBetAmount: String(market.minBetAmount),
     maxBetAmount: String(market.maxBetAmount),
@@ -42,7 +42,7 @@ function toPayload(form) {
     name: form.name.trim(),
     symbol: form.symbol.trim().toUpperCase(),
     openTime: form.openTime,
-    closeTime: form.closeTime,
+    countryCode: form.countryCode.trim().toUpperCase(),
     maxParticipants: Number(form.maxParticipants),
     minBetAmount: Number(form.minBetAmount),
     maxBetAmount: Number(form.maxBetAmount),
@@ -146,12 +146,12 @@ export default function Markets() {
     if (!form) return
 
     const payload = toPayload(form)
-    if (!payload.name || !payload.symbol || !payload.openTime || !payload.closeTime) {
+    if (!payload.name || !payload.symbol || !payload.openTime || !payload.countryCode) {
       setFormError('Complete all fields before saving.')
       return
     }
-    if (payload.openTime === payload.closeTime) {
-      setFormError('Close time must differ from open time. An earlier close time is the next day.')
+    if (!/^[A-Z]{2}$/.test(payload.countryCode)) {
+      setFormError('Country code must contain two letters.')
       return
     }
     if (!Number.isInteger(payload.maxParticipants) || payload.maxParticipants < 1) {
@@ -184,12 +184,6 @@ export default function Markets() {
     } finally {
       setIsSaving(false)
     }
-  }
-
-  const openResult = (market) => {
-    setResultMarket(market)
-    setResultText('')
-    setPageError('')
   }
 
   const declareResult = async (event) => {
@@ -289,7 +283,9 @@ export default function Markets() {
                   <div className="mt-4 grid gap-3 text-sm text-gray-600 sm:grid-cols-2">
                     <p className="flex items-center gap-2">
                       <Clock3 className="h-4 w-4 text-gray-400" />
-                      {market.openTime} – {market.closeTime}
+                      {market.openTime} – {market.sessionCloseAt
+                        ? new Date(market.sessionCloseAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+                        : 'Close time pending'}
                     </p>
                     <p className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-gray-400" />
@@ -407,7 +403,7 @@ export default function Markets() {
                 {editingMarketId ? `Edit ${form.name}` : 'Add market'}
               </h2>
               <p className="mt-1 text-sm text-gray-500">
-                Enter market details. Close time may be after midnight, such as 7:00 PM to 1:30 AM.
+                Set the open time in India time. Close time is fetched when the market opens.
               </p>
             </div>
 
@@ -457,14 +453,15 @@ export default function Markets() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="market-close-time">Close time</Label>
+                  <Label htmlFor="market-country-code">Country code</Label>
                   <TextInput
                     className={fieldClassName}
-                    id="market-close-time"
-                    name="closeTime"
-                    type="time"
-                    value={form.closeTime}
+                    id="market-country-code"
+                    name="countryCode"
+                    value={form.countryCode}
                     onChange={updateField}
+                    maxLength={2}
+                    placeholder="IN"
                     required
                   />
                 </div>

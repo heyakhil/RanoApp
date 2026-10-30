@@ -20,6 +20,8 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
  * @property {string} rapidApiKey
  * @property {string} rapidApiHost
  * @property {string} yahooQuotesUrl
+ * @property {string} yahooMarketTimeUrl
+ * @property {number} betCutoffMinutes
  * @property {number} resultDelayMinutes
  * @property {number} resultWaitMinutes
  * @property {string} resultCronSecret
@@ -51,7 +53,7 @@ function loadEnv() {
     throw new Error('ADMIN_JWT_EXPIRES_IN_SECONDS must be a positive integer');
   }
 
-  const resultDelayMinutes = Number(process.env.RESULT_DELAY_MINUTES ?? 5);
+  const resultDelayMinutes = Number(process.env.RESULT_DELAY_MINUTES ?? 0);
   if (!Number.isInteger(resultDelayMinutes) || resultDelayMinutes < 0) {
     throw new Error('RESULT_DELAY_MINUTES must be a whole number of minutes');
   }
@@ -59,6 +61,11 @@ function loadEnv() {
   const resultWaitMinutes = Number(process.env.RESULT_WAIT_MINUTES ?? 15);
   if (!Number.isInteger(resultWaitMinutes) || resultWaitMinutes < 0) {
     throw new Error('RESULT_WAIT_MINUTES must be a whole number of minutes');
+  }
+
+  const betCutoffMinutes = Number(process.env.BET_CUTOFF_MINUTES ?? 15);
+  if (!Number.isInteger(betCutoffMinutes) || betCutoffMinutes < 0) {
+    throw new Error('BET_CUTOFF_MINUTES must be a non-negative whole number');
   }
 
   const commissionPercent = Number(process.env.COMMISSION_PERCENT ?? 10);
@@ -95,6 +102,9 @@ function loadEnv() {
     yahooQuotesUrl:
       process.env.YAHOO_QUOTES_URL ||
       'https://yahoo-finance166.p.rapidapi.com/api/market/get-quote-v2',
+    yahooMarketTimeUrl: process.env.YAHOO_MARKET_TIME_URL ||
+      'https://yahoo-finance166.p.rapidapi.com/api/market/get-market-time',
+    betCutoffMinutes,
     resultDelayMinutes,
     resultWaitMinutes,
     resultCronSecret: process.env.RESULT_CRON_SECRET || '',

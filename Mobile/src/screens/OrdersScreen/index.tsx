@@ -40,7 +40,7 @@ function formatClock(totalSeconds: number): string {
 }
 
 function resultMoment(order: UserOrder): Date {
-  return new Date(order.scheduledResultAt);
+  return new Date(order.scheduledResultAt ?? order.createdAt);
 }
 
 function formatResultTime(order: UserOrder): string {

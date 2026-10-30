@@ -59,15 +59,6 @@ export async function updateMarket(id, input) {
   if (!currentMarket) {
     throw new ApiError(404, 'Market not found', 'MARKET_NOT_FOUND');
   }
-  const nextOpenTime = input.openTime ?? currentMarket.openTime;
-  const nextCloseTime = input.closeTime ?? currentMarket.closeTime;
-  if (nextOpenTime === nextCloseTime) {
-    throw new ApiError(
-      400,
-      'Close time must differ from open time. An earlier close time is the next day.',
-      'INVALID_MARKET_HOURS',
-    );
-  }
   const nextMinBetAmount = input.minBetAmount ?? Number(currentMarket.minBetAmount);
   const nextMaxBetAmount = input.maxBetAmount ?? Number(currentMarket.maxBetAmount);
   if (nextMinBetAmount > nextMaxBetAmount) {
@@ -78,10 +69,24 @@ export async function updateMarket(id, input) {
     );
   }
 
+  if (input.openTime !== undefined || input.countryCode !== undefined) {
+    const activeBets = await prisma.marketEntry.count({
+      where: { marketId: id, roundNumber: currentMarket.currentRound },
+    });
+    if (activeBets > 0) {
+      throw new ApiError(409, 'Wait for the current round to settle before changing market schedule', 'MARKET_ROUND_ACTIVE');
+    }
+  }
+
   try {
     const market = await prisma.market.update({
       where: { id },
-      data: input,
+      data: {
+        ...input,
+        ...(input.openTime !== undefined || input.countryCode !== undefined
+          ? { sessionOpenAt: null, sessionCloseAt: null, lastCloseFetchAt: null, closeTime: null }
+          : {}),
+      },
     });
     return presentMarket(market);
   } catch (error) {
