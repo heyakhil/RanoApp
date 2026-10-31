@@ -461,7 +461,7 @@ export function isResultDue(market, now = new Date()) {
   if (!close || !market.sessionOpenAt || !market.sessionCloseVerified) return false;
   const dueAt = scheduledResultAt(market).getTime();
 
-  if (now.getTime() < dueAt) {
+  if (now.getTime() <= dueAt) {
     return false;
   }
 

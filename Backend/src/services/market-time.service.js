@@ -14,10 +14,9 @@ function parts(at) {
 
 export function shouldFetchMarketTime(lastAttempt, now) {
   if (!lastAttempt) return true;
-  const previous = parts(lastAttempt);
-  const current = parts(now);
-  return `${previous.year}-${previous.month}-${previous.day}` !==
-    `${current.year}-${current.month}-${current.day}`;
+  // An unsuccessful open-time fetch must not leave the market without a close
+  // for the rest of the day. Retry on the minute cron with a bounded interval.
+  return now.getTime() - lastAttempt.getTime() >= 5 * 60_000;
 }
 
 function parseInstant(value) {
@@ -84,7 +83,7 @@ export async function syncOpenedMarketSessions(now = new Date()) {
         shouldFetchMarketTime(market.closeVerificationAttemptAt, now);
     }
     if (market.openTime > currentClock) return false;
-    // One market-time request per market per India day keeps Basic-plan usage bounded.
+    // A successful session is guarded below; failed open-time fetches retry.
     if (!shouldFetchMarketTime(market.lastCloseFetchAt, now)) return false;
     if (market.sessionOpenAt && parts(market.sessionOpenAt).year + '-' +
       parts(market.sessionOpenAt).month + '-' + parts(market.sessionOpenAt).day === today) return false;

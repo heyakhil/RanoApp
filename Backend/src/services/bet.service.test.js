@@ -5,13 +5,20 @@ process.env.DATABASE_URL ??= 'mysql://test:test@127.0.0.1:3306/test';
 process.env.JWT_SECRET ??= 'test-secret';
 process.env.RESULT_DELAY_MINUTES = '5';
 const { scheduledResultAt, isResultDue } = await import('./bet.service.js');
-const { parseMarketClose } = await import('./market-time.service.js');
+const { parseMarketClose, shouldFetchMarketTime } = await import('./market-time.service.js');
 
 test('reads the German market close from the supplied API response', () => {
   const response = { finance: { marketTimes: [{ marketTime: [{
     id: 'de', close: '2026-10-30T16:30:00Z', time: '2026-10-30T17:58:15Z',
   }] }] } };
   assert.equal(parseMarketClose(response, 'DE').toISOString(), '2026-10-30T16:30:00.000Z');
+});
+
+test('retries an unsuccessful market-time fetch five minutes after opening', () => {
+  const attemptedAt = new Date('2026-10-30T04:00:00Z');
+  assert.equal(shouldFetchMarketTime(null, attemptedAt), true);
+  assert.equal(shouldFetchMarketTime(attemptedAt, new Date('2026-10-30T04:04:59Z')), false);
+  assert.equal(shouldFetchMarketTime(attemptedAt, new Date('2026-10-30T04:05:00Z')), true);
 });
 
 test('result is due five minutes after the API close, with no fixed 10 PM gate', () => {
@@ -24,7 +31,8 @@ test('result is due five minutes after the API close, with no fixed 10 PM gate',
   const dueAt = scheduledResultAt(market);
   assert.equal(dueAt.toISOString(), '2026-10-30T10:05:00.000Z');
   assert.equal(isResultDue(market, new Date(dueAt.getTime() - 1)), false);
-  assert.equal(isResultDue(market, dueAt), true);
+  assert.equal(isResultDue(market, dueAt), false);
+  assert.equal(isResultDue(market, new Date(dueAt.getTime() + 1)), true);
 });
 
 test('the supplied German API close becomes 10:05 PM IST with a five-minute delay', () => {

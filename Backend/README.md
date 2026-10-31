@@ -102,11 +102,11 @@ returned close timestamp, and persists it for the session. `RAPIDAPI_KEY` is
 required. `YAHOO_MARKET_TIME_URL` can override the endpoint URL. Until a valid
 API close is stored and verified, betting and settlement are closed. Existing
 closes carried over from the old manual schedule are re-fetched after the
-verification migration. To fit RapidAPI Basic, a market makes at
-most one market-time request per India day. A failed fetch keeps betting closed
-for that session. Betting stops `BET_CUTOFF_MINUTES` before
-the persisted close (15 minutes by default), enforced by the backend. At the
-API close plus `RESULT_DELAY_MINUTES` (0 by default), the cron fetches quotes
+verification migration. If the market-time request fails, the cron retries it
+after five minutes until a valid close is saved. Betting remains closed until
+that happens. Betting stops `BET_CUTOFF_MINUTES` before
+the persisted close (15 minutes by default), enforced by the backend. Once the
+current time is later than the API close plus `RESULT_DELAY_MINUTES` (0 by default), the cron fetches quotes
 and settles the result. It makes at most two
 quote requests per market round, at least five minutes apart.
 If no quote can be fetched, it retries
