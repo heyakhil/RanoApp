@@ -58,7 +58,7 @@ export function splitCommission(betAmount) {
 }
 
 export function canPlaceBet(market, now = new Date()) {
-  if (!market.sessionOpenAt || !market.sessionCloseAt || !market.sessionCloseVerified) return false;
+  if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
   if (market.lastSettledClose && market.lastSettledClose >= market.sessionCloseAt) return false;
   return now >= market.sessionOpenAt &&
     now.getTime() < market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000;
@@ -144,11 +144,11 @@ export function toPublicMarket(market, totals, lastResultAt = null) {
     symbol: market.symbol,
     imageUrl: market.imageUrl ?? '',
     openTime: market.openTime,
-    closeTime: market.sessionCloseVerified ? market.closeTime : null,
+    closeTime: market.closeTime,
     countryCode: market.countryCode,
     sessionOpenAt: market.sessionOpenAt,
-    sessionCloseAt: market.sessionCloseVerified ? market.sessionCloseAt : null,
-    bettingClosesAt: market.sessionCloseVerified && market.sessionCloseAt &&
+    sessionCloseAt: market.sessionCloseAt,
+    bettingClosesAt: market.sessionCloseAt &&
       (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt)
       ? new Date(market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000)
       : null,
@@ -260,12 +260,12 @@ export async function listUserOrders(userId, { page, pageSize }) {
     const participants = isCurrentRound
       ? liveCount?._count._all ?? 0
       : settled?.participantCount ?? liveCount?._count._all ?? 0;
-    const resultAt = (settled || entry.market.sessionCloseVerified) ? scheduledResultAt({
+    const resultAt = scheduledResultAt({
       sessionOpenAt: isLiveRound ? entry.market.sessionOpenAt :
         settled?.sessionOn ?? entry.createdAt,
       sessionCloseAt: settled?.sessionCloseAt ??
         (isLiveRound ? entry.market.sessionCloseAt : null),
-    }) : null;
+    });
 
     return {
       id: entry.id,
@@ -458,7 +458,7 @@ export async function joinMarket(userId, marketId, pickedNumber, amount, digitSi
 
 export function isResultDue(market, now = new Date()) {
   const close = market.sessionCloseAt;
-  if (!close || !market.sessionOpenAt || !market.sessionCloseVerified) return false;
+  if (!close || !market.sessionOpenAt) return false;
   const dueAt = scheduledResultAt(market).getTime();
 
   if (now.getTime() <= dueAt) {

@@ -5,6 +5,7 @@ import {
 } from './config/database.js';
 import { env } from './config/env.js';
 import { initFirebase } from './config/firebase.js';
+import { settleDueMarkets } from './services/bet.service.js';
 
 async function bootstrap() {
   initFirebase();
@@ -17,8 +18,24 @@ async function bootstrap() {
     console.log(`Health: http://localhost:${env.port}/api/v1/health`);
   });
 
+  let settling = false;
+  const runMarketSync = async () => {
+    if (settling) return;
+    settling = true;
+    try {
+      await settleDueMarkets();
+    } catch (error) {
+      console.error('Market sync failed', error);
+    } finally {
+      settling = false;
+    }
+  };
+  void runMarketSync();
+  const marketSyncTimer = setInterval(() => { void runMarketSync(); }, 60_000);
+
   const shutdown = async (signal) => {
     console.log(`${signal} received, shutting down...`);
+    clearInterval(marketSyncTimer);
     server.close(async () => {
       await disconnectDatabase();
       process.exit(0);

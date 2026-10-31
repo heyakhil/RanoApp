@@ -94,17 +94,18 @@ kept when the participation guard is added.
 Market create, update, and delete endpoints require an admin JWT issued by
 `POST /api/v1/admin/login`; mobile user tokens cannot modify markets. Admins
 set an `openTime` in 24-hour Asia/Kolkata time and a two-letter `countryCode`
-(RapidAPI `region` value). They cannot set the close time. Configure an external
-cron to call `POST /api/v1/markets/results/settle` **every minute**, with the
-`X-Cron-Secret` header. At or after the configured open time, it calls Yahoo
+(RapidAPI `region` value). They cannot set the close time. The backend checks
+markets on startup and every minute. The cron endpoint remains available for
+an external scheduler if needed. At or after the configured open time, it calls Yahoo
 Finance `market/get-market-time?region=...` for the market's country, validates the
 returned close timestamp, and persists it for the session. `RAPIDAPI_KEY` is
 required. `YAHOO_MARKET_TIME_URL` can override the endpoint URL. Until a valid
-API close is stored and verified, betting and settlement are closed. Existing
-closes carried over from the old manual schedule are re-fetched after the
-verification migration. If the market-time request fails, the cron retries it
-after five minutes until a valid close is saved. Betting remains closed until
-that happens. Betting stops `BET_CUTOFF_MINUTES` before
+API close is stored, betting and settlement are closed. The close timestamp
+and its IST time are saved together; no separate verification flag is needed.
+Older unverified closes are cleared by the migration and fetched again. The
+backend makes at most one market-time request per market per IST day and skips
+weekends. If no valid close is returned, betting stays closed until the next
+trading-day lookup. Betting stops `BET_CUTOFF_MINUTES` before
 the persisted close (15 minutes by default), enforced by the backend. Once the
 current time is later than the API close plus `RESULT_DELAY_MINUTES` (0 by default), the cron fetches quotes
 and settles the result. It makes at most two
@@ -112,7 +113,7 @@ quote requests per market round, at least five minutes apart.
 If no quote can be fetched, it retries
 until `RESULT_WAIT_MINUTES` (15 by default) has elapsed, then cancels and
 refunds the round and reverses its commissions. An unsettled session's close
-time is never replaced by the next session's schedule once verified. Apply the included
+time is never replaced by the next session's schedule. Apply the included
 Prisma migration before deploying these changes.
 
 Withdrawal amounts are reserved from the user's wallet when a request is

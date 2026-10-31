@@ -14,9 +14,10 @@ function parts(at) {
 
 export function shouldFetchMarketTime(lastAttempt, now) {
   if (!lastAttempt) return true;
-  // An unsuccessful open-time fetch must not leave the market without a close
-  // for the rest of the day. Retry on the minute cron with a bounded interval.
-  return now.getTime() - lastAttempt.getTime() >= 5 * 60_000;
+  const previous = parts(lastAttempt);
+  const current = parts(now);
+  return `${previous.year}-${previous.month}-${previous.day}` !==
+    `${current.year}-${current.month}-${current.day}`;
 }
 
 function parseInstant(value) {
@@ -68,24 +69,20 @@ export async function fetchMarketClose(countryCode) {
 }
 
 export async function syncOpenedMarketSessions(now = new Date()) {
-  const markets = await prisma.market.findMany();
   const current = parts(now);
   const today = `${current.year}-${current.month}-${current.day}`;
+  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return { synced: [], skipped: [] };
+  const markets = await prisma.market.findMany();
   const currentClock = `${current.hour}:${current.minute}`;
-  const needsVerification = (market) => Boolean(
-    market.sessionCloseAt && !market.sessionCloseVerified &&
-    (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt),
-  );
+  const pendingSession = (market) => market.sessionOpenAt && !market.sessionCloseAt &&
+    now >= market.sessionOpenAt &&
+    now.getTime() - market.sessionOpenAt.getTime() < 24 * 60 * 60 * 1000;
   const due = markets.filter((market) => {
-    if (needsVerification(market)) {
-      return market.sessionOpenAt && now >= market.sessionOpenAt &&
-        now.getTime() - market.sessionOpenAt.getTime() < 24 * 60 * 60 * 1000 &&
-        shouldFetchMarketTime(market.closeVerificationAttemptAt, now);
-    }
-    if (market.openTime > currentClock) return false;
-    // A successful session is guarded below; failed open-time fetches retry.
+    if (!pendingSession(market) && market.openTime > currentClock) return false;
+    // One market-time attempt per India day keeps the API quota bounded.
     if (!shouldFetchMarketTime(market.lastCloseFetchAt, now)) return false;
-    if (market.sessionOpenAt && parts(market.sessionOpenAt).year + '-' +
+    if (market.sessionCloseAt && market.sessionOpenAt && parts(market.sessionOpenAt).year + '-' +
       parts(market.sessionOpenAt).month + '-' + parts(market.sessionOpenAt).day === today) return false;
     // Never replace an unsettled session's close timestamp.
     if (market.sessionCloseAt && (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt)) return false;
@@ -94,8 +91,7 @@ export async function syncOpenedMarketSessions(now = new Date()) {
   const reserved = await Promise.all(due.map(async (market) => {
     const result = await prisma.market.updateMany({
       where: { id: market.id, lastCloseFetchAt: market.lastCloseFetchAt },
-      data: { lastCloseFetchAt: now,
-        ...(needsVerification(market) ? { closeVerificationAttemptAt: now } : {}) },
+      data: { lastCloseFetchAt: now },
     });
     return result.count ? market : null;
   }));
@@ -113,7 +109,7 @@ export async function syncOpenedMarketSessions(now = new Date()) {
   const skipped = [];
   for (const market of claimed) {
     const closeAt = closeByCountry.get(market.countryCode);
-    const openAt = needsVerification(market)
+    const openAt = pendingSession(market)
       ? market.sessionOpenAt
       : new Date(`${today}T${market.openTime}:00+05:30`);
     if (!closeAt || closeAt <= openAt || closeAt.getTime() - openAt.getTime() > 24 * 60 * 60 * 1000) {
@@ -127,7 +123,6 @@ export async function syncOpenedMarketSessions(now = new Date()) {
         lastCloseFetchAt: now, sessionOpenAt: market.sessionOpenAt,
         sessionCloseAt: market.sessionCloseAt },
       data: { sessionOpenAt: openAt, sessionCloseAt: closeAt,
-        sessionCloseVerified: true,
         closeTime: `${closeParts.hour}:${closeParts.minute}`,
         quoteFetchAttempts: 0, lastQuoteFetchAt: null },
     });
