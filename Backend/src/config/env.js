@@ -23,7 +23,6 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
  * @property {string} yahooMarketTimeUrl
  * @property {number} betCutoffMinutes
  * @property {number} resultDelayMinutes
- * @property {number} resultWaitMinutes
  * @property {string} resultCronSecret
  * @property {string} vapidSubject
  * @property {string} vapidPublicKey
@@ -56,11 +55,6 @@ function loadEnv() {
   const resultDelayMinutes = Number(process.env.RESULT_DELAY_MINUTES ?? 0);
   if (!Number.isInteger(resultDelayMinutes) || resultDelayMinutes < 0) {
     throw new Error('RESULT_DELAY_MINUTES must be a whole number of minutes');
-  }
-
-  const resultWaitMinutes = Number(process.env.RESULT_WAIT_MINUTES ?? 15);
-  if (!Number.isInteger(resultWaitMinutes) || resultWaitMinutes < 0) {
-    throw new Error('RESULT_WAIT_MINUTES must be a whole number of minutes');
   }
 
   const betCutoffMinutes = Number(process.env.BET_CUTOFF_MINUTES ?? 15);
@@ -106,7 +100,6 @@ function loadEnv() {
       'https://yahoo-finance166.p.rapidapi.com/api/market/get-market-time',
     betCutoffMinutes,
     resultDelayMinutes,
-    resultWaitMinutes,
     resultCronSecret: process.env.RESULT_CRON_SECRET || '',
     vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@ranoapps.com',
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',

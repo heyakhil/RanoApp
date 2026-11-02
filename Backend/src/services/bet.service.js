@@ -8,6 +8,7 @@ import { syncOpenedMarketSessions } from './market-time.service.js';
 
 const TWO_DIGIT_MULTIPLIER = 70;
 const ONE_DIGIT_MULTIPLIER = 9;
+const CLOSE_RECHECK_MINUTES = 15;
 
 function moneyNumber(value) {
   return Math.round(Number(value ?? 0) * 100) / 100;
@@ -60,13 +61,28 @@ export function splitCommission(betAmount) {
 export function canPlaceBet(market, now = new Date()) {
   if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
   if (market.lastSettledClose && market.lastSettledClose >= market.sessionCloseAt) return false;
+  const bettingClosesAt = new Date(
+    market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000);
   return now >= market.sessionOpenAt &&
-    now.getTime() < market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000;
+    now.getTime() < bettingClosesAt.getTime();
 }
 
 export function shouldFetchQuote(market, now) {
-  return market.quoteFetchAttempts < 2 &&
-    (!market.lastQuoteFetchAt || now.getTime() - market.lastQuoteFetchAt.getTime() >= 5 * 60_000);
+  return !market.lastQuoteFetchAt ||
+    now.getTime() - market.lastQuoteFetchAt.getTime() >= CLOSE_RECHECK_MINUTES * 60_000;
+}
+
+export function isClosedMarketState(state) {
+  return state === 'POST' || state === 'CLOSED';
+}
+
+export function isQuoteFromClosingSession(quote, market, now) {
+  const rawTime = Number(quote?.regularMarketTime);
+  if (!Number.isFinite(rawTime) || rawTime <= 0 || !market.sessionOpenAt) return false;
+  const quoteAt = rawTime < 1e12 ? rawTime * 1000 : rawTime;
+  const earliest = Math.max(market.sessionOpenAt.getTime(), market.sessionCloseAt.getTime());
+  return quoteAt >= earliest && quoteAt < market.sessionOpenAt.getTime() + 24 * 60 * 60_000 &&
+    quoteAt <= now.getTime() + 60_000;
 }
 
 async function creditBetCommission(tx, entry) {
@@ -538,10 +554,15 @@ export async function declareMarketResult(marketId, result, options = {}) {
       throw new ApiError(409, 'This market result is not due yet', 'MARKET_RESULT_NOT_DUE');
     }
 
+    if (closeAt && market.sessionCloseAt.getTime() !== closeAt.getTime()) {
+      return null;
+    }
+
     if (closeAt) {
       const reserved = await tx.market.updateMany({
         where: {
           id: marketId,
+          sessionCloseAt: closeAt,
           OR: [{ lastSettledClose: null }, { lastSettledClose: { lt: closeAt } }],
         },
         data: { lastSettledClose: closeAt },
@@ -710,113 +731,6 @@ export async function declareMarketResult(marketId, result, options = {}) {
   return outcome;
 }
 
-async function cancelMarketRound(market, closeAt) {
-  return prisma.$transaction(async (tx) => {
-    const reserved = await tx.market.updateMany({
-      where: {
-        id: market.id,
-        currentRound: market.currentRound,
-        OR: [{ lastSettledClose: null }, { lastSettledClose: { lt: closeAt } }],
-      },
-      data: { lastSettledClose: closeAt },
-    });
-
-    if (reserved.count !== 1) {
-      return null;
-    }
-
-    const entries = await tx.marketEntry.findMany({
-      where: { marketId: market.id, roundNumber: market.currentRound },
-      select: { userId: true, amount: true },
-    });
-
-    if (entries.length === 0) {
-      return null;
-    }
-
-    const refundByUser = new Map();
-    let totalRefund = new Prisma.Decimal(0);
-    for (const entry of entries) {
-      const amount = new Prisma.Decimal(entry.amount);
-      totalRefund = totalRefund.add(amount);
-      refundByUser.set(
-        entry.userId,
-        (refundByUser.get(entry.userId) ?? new Prisma.Decimal(0)).add(amount),
-      );
-    }
-
-    for (const [userId, amount] of refundByUser) {
-      await tx.user.update({
-        where: { id: userId },
-        data: { walletBalance: { increment: amount } },
-      });
-    }
-
-    const commissionGroups = await tx.commissionEntry.groupBy({
-      by: ['accountId', 'role', 'marketEntryId'],
-      where: {
-        marketId: market.id,
-        roundNumber: market.currentRound,
-        marketEntryId: { not: null },
-        accountId: { not: null },
-      },
-      _sum: { amount: true },
-    });
-
-    for (const group of commissionGroups) {
-      if (group.accountId && group._sum.amount) {
-        await tx.adminAccount.update({
-          where: { id: group.accountId },
-          data: { commissionBalance: { decrement: group._sum.amount } },
-        });
-      }
-    }
-
-    if (commissionGroups.length > 0) {
-      await tx.commissionEntry.createMany({
-        data: commissionGroups
-          .filter((group) => group.accountId && group.marketEntryId && group._sum.amount)
-          .map((group) => ({
-            marketId: market.id,
-            roundNumber: market.currentRound,
-            accountId: group.accountId,
-            role: group.role,
-            marketEntryId: group.marketEntryId,
-            amount: new Prisma.Decimal(group._sum.amount).mul(-1),
-          })),
-      });
-    }
-    await tx.marketRound.create({
-      data: {
-        marketId: market.id,
-        roundNumber: market.currentRound,
-        result: null,
-        status: 'canceled',
-        participantCount: entries.length,
-        totalBetAmount: totalRefund,
-        settledOn: settlementDate(closeAt),
-        sessionOn: settlementDate(market.sessionOpenAt),
-        sessionCloseAt: closeAt,
-      },
-    });
-    await tx.market.update({
-      where: { id: market.id },
-      data: {
-        participants: 0,
-        currentRound: { increment: 1 },
-      },
-    });
-
-    return {
-      marketId: market.id,
-      symbol: market.symbol,
-      canceledRound: market.currentRound,
-      refundedAmount: moneyNumber(totalRefund),
-      refundedPlayers: refundByUser.size,
-    };
-  });
-}
-
 export async function settleDueMarkets(now = new Date()) {
   const { synced, skipped: syncSkipped } = await syncOpenedMarketSessions(now);
   const markets = await prisma.market.findMany();
@@ -892,7 +806,7 @@ export async function settleDueMarkets(now = new Date()) {
       const reserved = await prisma.market.updateMany({
         where: { id: market.id, currentRound: market.currentRound,
           sessionCloseAt: market.sessionCloseAt,
-          quoteFetchAttempts: { lt: 2 }, lastQuoteFetchAt: market.lastQuoteFetchAt },
+          lastQuoteFetchAt: market.lastQuoteFetchAt },
         data: { quoteFetchAttempts: { increment: 1 }, lastQuoteFetchAt: now },
       });
       return reserved.count ? market : null;
@@ -912,39 +826,33 @@ export async function settleDueMarkets(now = new Date()) {
     quotes.map((quote) => [String(quote.symbol ?? '').toUpperCase(), quote]),
   );
   const settled = [];
-  const canceled = [];
   const pendingNotifications = [];
 
   await Promise.all(
     dueMarkets.map(async (market) => {
+      if (!quoteReady.has(market.id)) {
+        skipped.push({ marketId: market.id, symbol: market.symbol,
+          reason: quoteFailure ?? 'Waiting for the next market-state check' });
+        return;
+      }
       const quote = quotesBySymbol.get(market.symbol.toUpperCase());
-      if (quoteFailure || !quote || quote.regularMarketPrice == null) {
-        const reason =
-          quoteFailure ??
-          (quoteReady.has(market.id)
-            ? 'No regularMarketPrice was returned by the quote provider'
-            : 'Waiting for the next quote retry or retry limit reached');
-        const cancelAt = scheduledResultAt(market).getTime() +
-          env.resultWaitMinutes * 60_000;
-        if (now.getTime() < cancelAt) {
-          skipped.push({
-            marketId: market.id,
-            symbol: market.symbol,
-            reason: `${reason}; will retry until ${new Date(cancelAt).toISOString()}`,
-          });
-          return;
-        }
+      if (quoteFailure || !quote) {
+        skipped.push({ marketId: market.id, symbol: market.symbol,
+          reason: quoteFailure ?? 'No quote was returned by the provider; will retry' });
+        return;
+      }
 
-        const outcome = await cancelMarketRound(market, market.closeAt);
-        if (outcome) {
-          canceled.push({ ...outcome, reason });
-        } else {
-          skipped.push({
-            marketId: market.id,
-            symbol: market.symbol,
-            reason: 'Round was already handled',
-          });
-        }
+      if (!isClosedMarketState(quote.marketState)) {
+        skipped.push({ marketId: market.id, symbol: market.symbol,
+          reason: `Market state ${quote.marketState ?? 'unknown'}; next check after ${new Date(now.getTime() + CLOSE_RECHECK_MINUTES * 60_000).toISOString()}` });
+        return;
+      }
+
+      if (quote.regularMarketPrice == null ||
+          !Number.isFinite(Number(quote.regularMarketPrice)) ||
+          !isQuoteFromClosingSession(quote, market, now)) {
+        skipped.push({ marketId: market.id, symbol: market.symbol,
+          reason: 'Market is closed, but its regular-session quote is missing or stale; will retry' });
         return;
       }
 
@@ -998,7 +906,7 @@ export async function settleDueMarkets(now = new Date()) {
     );
   }
 
-  return { synced, syncSkipped, settled, canceled, skipped };
+  return { synced, syncSkipped, settled, canceled: [], skipped };
 }
 
 export async function listResultHistory(from, to, { page, pageSize }) {

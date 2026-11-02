@@ -58,7 +58,7 @@ npm run dev
 | GET | `/api/v1/markets` | — | List markets |
 | GET | `/api/v1/markets/orders?page=1&pageSize=20` | User JWT | Paginated user orders |
 | GET | `/api/v1/markets/history?from=...&to=...&page=1&pageSize=20` | User JWT | Paginated result history |
-| POST | `/api/v1/markets/results/settle` | `X-Cron-Secret` | Settle due market rounds or cancel and refund overdue rounds |
+| POST | `/api/v1/markets/results/settle` | `X-Cron-Secret` | Check due market states and settle closed rounds |
 | GET | `/api/v1/markets/:id` | — | Get a market |
 | GET | `/api/v1/transactions?page=1&pageSize=20` | User JWT | Paginated wallet transaction history |
 | POST | `/api/v1/markets` | JWT | Create a market (maximum five) |
@@ -107,14 +107,13 @@ backend makes at most one market-time request per market per IST day and skips
 weekends. If no valid close is returned, betting stays closed until the next
 trading-day lookup. Betting stops `BET_CUTOFF_MINUTES` before
 the persisted close (15 minutes by default), enforced by the backend. Once the
-current time is later than the API close plus `RESULT_DELAY_MINUTES` (0 by default), the cron fetches quotes
-and settles the result. It makes at most two
-quote requests per market round, at least five minutes apart.
-If no quote can be fetched, it retries
-until `RESULT_WAIT_MINUTES` (15 by default) has elapsed, then cancels and
-refunds the round and reverses its commissions. An unsettled session's close
-time is never replaced by the next session's schedule. Apply the included
-Prisma migration before deploying these changes.
+current time is later than the API close plus `RESULT_DELAY_MINUTES` (0 by default),
+the cron fetches a quote and checks its `marketState`. A `POST` or `CLOSED` state
+with a quote from the current session permits settlement. While the market is
+open, the quote check repeats every 15 minutes. The original close time and
+betting cutoff stay fixed, so betting cannot reopen. Missing or stale quotes
+leave the round pending for another check. An unsettled session's close time
+is never replaced by the next session's schedule.
 
 Withdrawal amounts are reserved from the user's wallet when a request is
 submitted. Rejecting a request returns the reserved amount to the wallet;
