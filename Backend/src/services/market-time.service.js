@@ -53,7 +53,17 @@ export function parseMarketClose(body, countryCode) {
   return null;
 }
 
-export async function fetchMarketClose(countryCode) {
+export function parseMarketStatus(body, countryCode) {
+  const yahooMarkets = (body?.data ?? body)?.finance?.marketTimes;
+  if (!Array.isArray(yahooMarkets)) return null;
+  const times = yahooMarkets.flatMap((market) => market.marketTime ?? []);
+  const countryTime = times.find((time) =>
+    String(time.id ?? '').toUpperCase().startsWith(countryCode));
+  const status = countryTime?.status;
+  return typeof status === 'string' ? status.trim().toLowerCase() : null;
+}
+
+async function fetchMarketTimeBody(countryCode) {
   if (!env.rapidApiKey) throw new Error('RAPIDAPI_KEY is not configured');
   const url = new URL(env.yahooMarketTimeUrl);
   url.searchParams.set('region', countryCode);
@@ -63,9 +73,19 @@ export async function fetchMarketClose(countryCode) {
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`Market time API returned ${response.status}`);
-  const closeAt = parseMarketClose(await response.json(), countryCode);
+  return response.json();
+}
+
+export async function fetchMarketClose(countryCode) {
+  const closeAt = parseMarketClose(await fetchMarketTimeBody(countryCode), countryCode);
   if (!closeAt) throw new Error(`Market time API did not return a close timestamp for ${countryCode}`);
   return closeAt;
+}
+
+export async function fetchMarketStatus(countryCode) {
+  const status = parseMarketStatus(await fetchMarketTimeBody(countryCode), countryCode);
+  if (!status) throw new Error(`Market time API did not return a status for ${countryCode}`);
+  return status;
 }
 
 export async function syncOpenedMarketSessions(now = new Date()) {

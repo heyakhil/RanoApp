@@ -108,12 +108,13 @@ weekends. If no valid close is returned, betting stays closed until the next
 trading-day lookup. Betting stops `BET_CUTOFF_MINUTES` before
 the persisted close (15 minutes by default), enforced by the backend. Once the
 current time is later than the API close plus `RESULT_DELAY_MINUTES` (0 by default),
-the cron fetches a quote and checks its `marketState`. A `POST` or `CLOSED` state
-with a quote from the current session permits settlement. While the market is
-open, the quote check repeats every 15 minutes. The original close time and
-betting cutoff stay fixed, so betting cannot reopen. Missing or stale quotes
-leave the round pending for another check. An unsettled session's close time
-is never replaced by the next session's schedule.
+the cron checks `status` from `YAHOO_MARKET_TIME_URL` for that market's country.
+Only `closed` permits fetching a quote and settling, and the quote timestamp
+must match the pending session. Open, missing, and unknown statuses remain
+pending. The status check repeats every 15 minutes. The original close time
+and betting cutoff stay fixed, so betting cannot reopen. Missing or stale
+quotes leave the round pending for another check. An unsettled session's close
+time is never replaced by the next session's schedule.
 
 Withdrawal amounts are reserved from the user's wallet when a request is
 submitted. Rejecting a request returns the reserved amount to the wallet;

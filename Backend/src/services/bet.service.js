@@ -4,7 +4,7 @@ import { prisma } from '../config/prisma.js';
 import { ApiError } from '../utils/ApiError.js';
 import { notifyUser } from './notification.service.js';
 import { digitsAfterDecimal, fetchMarketQuotes } from './quote.service.js';
-import { syncOpenedMarketSessions } from './market-time.service.js';
+import { fetchMarketStatus, syncOpenedMarketSessions } from './market-time.service.js';
 
 const TWO_DIGIT_MULTIPLIER = 70;
 const ONE_DIGIT_MULTIPLIER = 9;
@@ -70,10 +70,6 @@ export function canPlaceBet(market, now = new Date()) {
 export function shouldFetchQuote(market, now) {
   return !market.lastQuoteFetchAt ||
     now.getTime() - market.lastQuoteFetchAt.getTime() >= CLOSE_RECHECK_MINUTES * 60_000;
-}
-
-export function isClosedMarketState(state) {
-  return state === 'POST' || state === 'CLOSED';
 }
 
 export function isQuoteFromClosingSession(quote, market, now) {
@@ -796,8 +792,9 @@ export async function settleDueMarkets(now = new Date()) {
   let quotes = [];
   let quoteFailure = null;
   const quoteReady = new Set();
+  const checkReasonByMarket = new Map();
   if (!env.rapidApiKey) {
-    quoteFailure = 'Market result API key is not configured';
+    quoteFailure = 'Market API key is not configured';
   } else {
     const candidates = await Promise.all(dueMarkets.map(async (market) => {
       if (!shouldFetchQuote(market, now)) {
@@ -812,10 +809,28 @@ export async function settleDueMarkets(now = new Date()) {
       return reserved.count ? market : null;
     }));
     const selected = candidates.filter(Boolean);
-    selected.forEach((market) => quoteReady.add(market.id));
-    if (selected.length > 0) {
+    const countries = [...new Set(selected.map((market) => market.countryCode))];
+    const statuses = await Promise.allSettled(countries.map(fetchMarketStatus));
+    const statusByCountry = new Map(countries.map((country, index) =>
+      [country, statuses[index]]));
+    const closedMarkets = selected.filter((market) => {
+      const statusResult = statusByCountry.get(market.countryCode);
+      if (statusResult.status === 'rejected') {
+        checkReasonByMarket.set(market.id,
+          `Market-time status unavailable: ${statusResult.reason?.message ?? statusResult.reason}`);
+        return false;
+      }
+      if (statusResult.value !== 'closed') {
+        checkReasonByMarket.set(market.id,
+          `Market-time status ${statusResult.value}; will check again in ${CLOSE_RECHECK_MINUTES} minutes`);
+        return false;
+      }
+      return true;
+    });
+    closedMarkets.forEach((market) => quoteReady.add(market.id));
+    if (closedMarkets.length > 0) {
       try {
-        quotes = await fetchMarketQuotes(selected.map((market) => market.symbol));
+        quotes = await fetchMarketQuotes(closedMarkets.map((market) => market.symbol));
       } catch (error) {
         quoteFailure = error.message;
         console.error('Market quote fetch failed', error);
@@ -832,7 +847,8 @@ export async function settleDueMarkets(now = new Date()) {
     dueMarkets.map(async (market) => {
       if (!quoteReady.has(market.id)) {
         skipped.push({ marketId: market.id, symbol: market.symbol,
-          reason: quoteFailure ?? 'Waiting for the next market-state check' });
+          reason: checkReasonByMarket.get(market.id) ?? quoteFailure ??
+            'Waiting for the next market-time status check' });
         return;
       }
       const quote = quotesBySymbol.get(market.symbol.toUpperCase());
@@ -842,17 +858,11 @@ export async function settleDueMarkets(now = new Date()) {
         return;
       }
 
-      if (!isClosedMarketState(quote.marketState)) {
-        skipped.push({ marketId: market.id, symbol: market.symbol,
-          reason: `Market state ${quote.marketState ?? 'unknown'}; next check after ${new Date(now.getTime() + CLOSE_RECHECK_MINUTES * 60_000).toISOString()}` });
-        return;
-      }
-
       if (quote.regularMarketPrice == null ||
           !Number.isFinite(Number(quote.regularMarketPrice)) ||
           !isQuoteFromClosingSession(quote, market, now)) {
         skipped.push({ marketId: market.id, symbol: market.symbol,
-          reason: 'Market is closed, but its regular-session quote is missing or stale; will retry' });
+          reason: 'Regular-session quote is missing or does not match the pending session; will retry' });
         return;
       }
 

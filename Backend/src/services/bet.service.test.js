@@ -5,16 +5,20 @@ process.env.DATABASE_URL ??= 'mysql://test:test@127.0.0.1:3306/test';
 process.env.JWT_SECRET ??= 'test-secret';
 process.env.RESULT_DELAY_MINUTES = '5';
 const { scheduledResultAt, isResultDue, canPlaceBet, toPublicMarket,
-  shouldFetchQuote, isClosedMarketState, isQuoteFromClosingSession } =
+  shouldFetchQuote, isQuoteFromClosingSession } =
   await import('./bet.service.js');
-const { parseMarketClose, shouldFetchMarketTime, syncOpenedMarketSessions } =
+const { parseMarketClose, parseMarketStatus, shouldFetchMarketTime,
+  syncOpenedMarketSessions } =
   await import('./market-time.service.js');
 
 test('reads the German market close from the supplied API response', () => {
   const response = { finance: { marketTimes: [{ marketTime: [{
     id: 'de', close: '2026-10-30T16:30:00Z', time: '2026-10-30T17:58:15Z',
+    status: 'closed',
   }] }] } };
   assert.equal(parseMarketClose(response, 'DE').toISOString(), '2026-10-30T16:30:00.000Z');
+  assert.equal(parseMarketStatus(response, 'DE'), 'closed');
+  assert.equal(parseMarketStatus(response, 'KR'), null);
 });
 
 test('makes at most one market-time fetch per India day', () => {
@@ -89,16 +93,18 @@ test('rechecking an open market does not change its close or reopen betting', ()
   assert.equal(shouldFetchQuote(market, new Date('2026-11-02T06:20:30Z')), true);
 });
 
-test('checks quote market state every fifteen minutes without a two-attempt limit', () => {
+test('checks market-time status every fifteen minutes without a two-attempt limit', () => {
   const lastQuoteFetchAt = new Date('2026-11-02T06:05:30Z');
   assert.equal(shouldFetchQuote({ quoteFetchAttempts: 3, lastQuoteFetchAt },
     new Date('2026-11-02T06:20:29Z')), false);
   assert.equal(shouldFetchQuote({ quoteFetchAttempts: 3, lastQuoteFetchAt },
     new Date('2026-11-02T06:20:30Z')), true);
-  assert.equal(isClosedMarketState('REGULAR'), false);
-  assert.equal(isClosedMarketState('POST'), true);
-  assert.equal(isClosedMarketState('CLOSED'), true);
-  assert.equal(isClosedMarketState(undefined), false);
+  const response = { finance: { marketTimes: [{ marketTime: [
+    { id: 'kr', status: 'closed' }, { id: 'de', status: 'open' },
+  ] }] } };
+  assert.equal(parseMarketStatus(response, 'KR'), 'closed');
+  assert.equal(parseMarketStatus(response, 'DE'), 'open');
+  assert.equal(parseMarketStatus(response, 'US'), null);
 });
 
 test('requires a quote from the closing session before settling', () => {
