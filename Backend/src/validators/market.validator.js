@@ -19,6 +19,7 @@ const marketFields = {
     .max(20)
     .transform((symbol) => symbol.toUpperCase()),
   openTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:mm time'),
+  closeTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:mm time'),
   countryCode: z.string().trim().regex(/^[A-Za-z]{2}$/, 'Use a two-letter country code').transform((code) => code.toUpperCase()),
   maxParticipants: z.number().int().positive().max(2147483647),
   minBetAmount: money,
@@ -39,6 +40,7 @@ export const updateMarketSchema = z
     name: marketFields.name.optional(),
     symbol: marketFields.symbol.optional(),
     openTime: marketFields.openTime.optional(),
+    closeTime: marketFields.closeTime.optional(),
     countryCode: marketFields.countryCode.optional(),
     maxParticipants: marketFields.maxParticipants.optional(),
     minBetAmount: marketFields.minBetAmount.optional(),

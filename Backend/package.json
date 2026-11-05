@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
+    "prestart": "prisma generate",
     "start": "node src/server.js",
+    "predev": "prisma generate",
     "dev": "node --watch src/server.js",
     "lint": "eslint .",
     "prisma:generate": "prisma generate",
@@ -16,10 +18,11 @@
     "postinstall": "prisma generate"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18.17"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "cheerio": "1.0.0",
     "cloudinary": "^2.11.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

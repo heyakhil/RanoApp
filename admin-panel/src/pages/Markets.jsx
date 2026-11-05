@@ -17,6 +17,7 @@ const emptyMarket = {
   name: '',
   symbol: '',
   openTime: '09:15',
+  closeTime: '15:30',
   countryCode: 'IN',
   maxParticipants: '100',
   minBetAmount: '10',
@@ -30,6 +31,7 @@ function toFormValues(market) {
     name: market.name,
     symbol: market.symbol,
     openTime: market.openTime,
+    closeTime: market.closeTime || '',
     countryCode: market.countryCode,
     maxParticipants: String(market.maxParticipants),
     minBetAmount: String(market.minBetAmount),
@@ -42,6 +44,7 @@ function toPayload(form) {
     name: form.name.trim(),
     symbol: form.symbol.trim().toUpperCase(),
     openTime: form.openTime,
+    closeTime: form.closeTime,
     countryCode: form.countryCode.trim().toUpperCase(),
     maxParticipants: Number(form.maxParticipants),
     minBetAmount: Number(form.minBetAmount),
@@ -146,7 +149,7 @@ export default function Markets() {
     if (!form) return
 
     const payload = toPayload(form)
-    if (!payload.name || !payload.symbol || !payload.openTime || !payload.countryCode) {
+    if (!payload.name || !payload.symbol || !payload.openTime || !payload.closeTime || !payload.countryCode) {
       setFormError('Complete all fields before saving.')
       return
     }
@@ -283,9 +286,7 @@ export default function Markets() {
                   <div className="mt-4 grid gap-3 text-sm text-gray-600 sm:grid-cols-2">
                     <p className="flex items-center gap-2">
                       <Clock3 className="h-4 w-4 text-gray-400" />
-                      {market.openTime} – {market.sessionCloseAt
-                        ? new Date(market.sessionCloseAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-                        : 'Close time pending'}
+                      {market.openTime} – {market.closeTime || 'Close time needed'} IST
                     </p>
                     <p className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-gray-400" />
@@ -403,7 +404,7 @@ export default function Markets() {
                 {editingMarketId ? `Edit ${form.name}` : 'Add market'}
               </h2>
               <p className="mt-1 text-sm text-gray-500">
-                Set the open time in India time. Close time is fetched when the market opens.
+                Set the open and close times in India time. Yahoo Finance is checked after close.
               </p>
             </div>
 
@@ -448,6 +449,18 @@ export default function Markets() {
                     name="openTime"
                     type="time"
                     value={form.openTime}
+                    onChange={updateField}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="market-close-time">Close time (IST)</Label>
+                  <TextInput
+                    className={fieldClassName}
+                    id="market-close-time"
+                    name="closeTime"
+                    type="time"
+                    value={form.closeTime}
                     onChange={updateField}
                     required
                   />

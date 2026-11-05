@@ -17,11 +17,6 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
  * @property {string[]} corsOrigins
  * @property {{ cloudName: string, apiKey: string, apiSecret: string }} cloudinary
  * @property {number} commissionPercent
- * @property {string} rapidApiKey
- * @property {string} rapidApiHost
- * @property {string} yahooQuotesUrl
- * @property {string} yahooMarketTimeUrl
- * @property {number} betCutoffMinutes
  * @property {number} resultDelayMinutes
  * @property {string} resultCronSecret
  * @property {string} vapidSubject
@@ -57,11 +52,6 @@ function loadEnv() {
     throw new Error('RESULT_DELAY_MINUTES must be a whole number of minutes');
   }
 
-  const betCutoffMinutes = Number(process.env.BET_CUTOFF_MINUTES ?? 15);
-  if (!Number.isInteger(betCutoffMinutes) || betCutoffMinutes < 0) {
-    throw new Error('BET_CUTOFF_MINUTES must be a non-negative whole number');
-  }
-
   const commissionPercent = Number(process.env.COMMISSION_PERCENT ?? 10);
   if (
     !Number.isFinite(commissionPercent) ||
@@ -91,14 +81,6 @@ function loadEnv() {
       apiSecret: process.env.CLOUDINARY_API_SECRET || '',
     },
     commissionPercent,
-    rapidApiKey: process.env.RAPIDAPI_KEY || '',
-    rapidApiHost: process.env.RAPIDAPI_HOST || 'yahoo-finance166.p.rapidapi.com',
-    yahooQuotesUrl:
-      process.env.YAHOO_QUOTES_URL ||
-      'https://yahoo-finance166.p.rapidapi.com/api/market/get-quote-v2',
-    yahooMarketTimeUrl: process.env.YAHOO_MARKET_TIME_URL ||
-      'https://yahoo-finance166.p.rapidapi.com/api/market/get-market-time',
-    betCutoffMinutes,
     resultDelayMinutes,
     resultCronSecret: process.env.RESULT_CRON_SECRET || '',
     vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@ranoapps.com',

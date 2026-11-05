@@ -4,11 +4,15 @@ import { prisma } from '../config/prisma.js';
 import { ApiError } from '../utils/ApiError.js';
 import { notifyUser } from './notification.service.js';
 import { digitsAfterDecimal, fetchMarketQuotes } from './quote.service.js';
-import { fetchMarketStatus, syncOpenedMarketSessions } from './market-time.service.js';
+import { syncOpenedMarketSessions } from './market-time.service.js';
+import { minimumMarketClose } from './exchange-hours.js';
 
 const TWO_DIGIT_MULTIPLIER = 70;
 const ONE_DIGIT_MULTIPLIER = 9;
-const CLOSE_RECHECK_MINUTES = 15;
+const QUOTE_RECHECK_MINUTES = 15;
+const INDEX_QUOTE_LAG_MINUTES = 20;
+const MAX_QUOTE_ATTEMPTS_PER_DAY = 4;
+const HISTORICAL_CLOSE_AGE_MS = 24 * 60 * 60_000;
 
 function moneyNumber(value) {
   return Math.round(Number(value ?? 0) * 100) / 100;
@@ -34,10 +38,14 @@ function settlementDate(now = new Date()) {
   return new Date(`${formatted}T00:00:00.000Z`);
 }
 
-// The market-time API close is an instant; apply the configured delay to it.
 export function scheduledResultAt(market) {
   if (!market.sessionCloseAt) return null;
-  return new Date(market.sessionCloseAt.getTime() + env.resultDelayMinutes * 60_000);
+  const minimumClose = minimumMarketClose(market.countryCode, market.sessionOpenAt);
+  const apiDueAt = market.sessionCloseAt.getTime() + env.resultDelayMinutes * 60_000;
+  const exchangeDueAt = minimumClose
+    ? minimumClose.getTime() + Math.max(env.resultDelayMinutes, INDEX_QUOTE_LAG_MINUTES) * 60_000
+    : 0;
+  return new Date(Math.max(apiDueAt, exchangeDueAt));
 }
 
 function uniqueConstraint(error) {
@@ -61,24 +69,31 @@ export function splitCommission(betAmount) {
 export function canPlaceBet(market, now = new Date()) {
   if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
   if (market.lastSettledClose && market.lastSettledClose >= market.sessionCloseAt) return false;
-  const bettingClosesAt = new Date(
-    market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000);
   return now >= market.sessionOpenAt &&
-    now.getTime() < bettingClosesAt.getTime();
+    now < market.sessionCloseAt;
+}
+
+function quoteAttemptsToday(market, now) {
+  const attempts = market.quoteFetchAttempts ?? 0;
+  if (attempts > MAX_QUOTE_ATTEMPTS_PER_DAY) return 0;
+  return market.lastQuoteFetchAt && indiaDateKey(market.lastQuoteFetchAt) === indiaDateKey(now)
+    ? attempts : 0;
 }
 
 export function shouldFetchQuote(market, now) {
-  return !market.lastQuoteFetchAt ||
-    now.getTime() - market.lastQuoteFetchAt.getTime() >= CLOSE_RECHECK_MINUTES * 60_000;
+  return quoteAttemptsToday(market, now) < MAX_QUOTE_ATTEMPTS_PER_DAY &&
+    (!market.lastQuoteFetchAt ||
+      now.getTime() - market.lastQuoteFetchAt.getTime() >= QUOTE_RECHECK_MINUTES * 60_000);
 }
 
 export function isQuoteFromClosingSession(quote, market, now) {
-  const rawTime = Number(quote?.regularMarketTime);
-  if (!Number.isFinite(rawTime) || rawTime <= 0 || !market.sessionOpenAt) return false;
-  const quoteAt = rawTime < 1e12 ? rawTime * 1000 : rawTime;
-  const earliest = Math.max(market.sessionOpenAt.getTime(), market.sessionCloseAt.getTime());
-  return quoteAt >= earliest && quoteAt < market.sessionOpenAt.getTime() + 24 * 60 * 60_000 &&
-    quoteAt <= now.getTime() + 60_000;
+  if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
+  const minimumClose = minimumMarketClose(market.countryCode, market.sessionOpenAt);
+  const state = String(quote?.marketState ?? '').toUpperCase();
+  if (state !== 'CLOSED') return false;
+  return quote?.sessionDate === indiaDateKey(market.sessionOpenAt) &&
+    now >= market.sessionCloseAt &&
+    (!minimumClose || now >= minimumClose);
 }
 
 async function creditBetCommission(tx, entry) {
@@ -162,7 +177,7 @@ export function toPublicMarket(market, totals, lastResultAt = null) {
     sessionCloseAt: market.sessionCloseAt,
     bettingClosesAt: market.sessionCloseAt &&
       (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt)
-      ? new Date(market.sessionCloseAt.getTime() - env.betCutoffMinutes * 60_000)
+      ? market.sessionCloseAt
       : null,
     maxParticipants: market.maxParticipants,
     participants,
@@ -790,51 +805,35 @@ export async function settleDueMarkets(now = new Date()) {
   }
 
   let quotes = [];
+  let quoteFailures = new Map();
   let quoteFailure = null;
   const quoteReady = new Set();
-  const checkReasonByMarket = new Map();
-  if (!env.rapidApiKey) {
-    quoteFailure = 'Market API key is not configured';
-  } else {
-    const candidates = await Promise.all(dueMarkets.map(async (market) => {
+  const candidates = await Promise.all(dueMarkets.map(async (market) => {
       if (!shouldFetchQuote(market, now)) {
         return null;
       }
       const reserved = await prisma.market.updateMany({
         where: { id: market.id, currentRound: market.currentRound,
           sessionCloseAt: market.sessionCloseAt,
-          lastQuoteFetchAt: market.lastQuoteFetchAt },
-        data: { quoteFetchAttempts: { increment: 1 }, lastQuoteFetchAt: now },
+          lastQuoteFetchAt: market.lastQuoteFetchAt,
+          quoteFetchAttempts: market.quoteFetchAttempts },
+        data: { quoteFetchAttempts: quoteAttemptsToday(market, now) + 1,
+          lastQuoteFetchAt: now },
       });
       return reserved.count ? market : null;
-    }));
-    const selected = candidates.filter(Boolean);
-    const countries = [...new Set(selected.map((market) => market.countryCode))];
-    const statuses = await Promise.allSettled(countries.map(fetchMarketStatus));
-    const statusByCountry = new Map(countries.map((country, index) =>
-      [country, statuses[index]]));
-    const closedMarkets = selected.filter((market) => {
-      const statusResult = statusByCountry.get(market.countryCode);
-      if (statusResult.status === 'rejected') {
-        checkReasonByMarket.set(market.id,
-          `Market-time status unavailable: ${statusResult.reason?.message ?? statusResult.reason}`);
-        return false;
-      }
-      if (statusResult.value !== 'closed') {
-        checkReasonByMarket.set(market.id,
-          `Market-time status ${statusResult.value}; will check again in ${CLOSE_RECHECK_MINUTES} minutes`);
-        return false;
-      }
-      return true;
-    });
-    closedMarkets.forEach((market) => quoteReady.add(market.id));
-    if (closedMarkets.length > 0) {
-      try {
-        quotes = await fetchMarketQuotes(closedMarkets.map((market) => market.symbol));
-      } catch (error) {
-        quoteFailure = error.message;
-        console.error('Market quote fetch failed', error);
-      }
+  }));
+  const selected = candidates.filter(Boolean);
+  selected.forEach((market) => quoteReady.add(market.id));
+  if (selected.length > 0) {
+    try {
+      ({ quotes, failures: quoteFailures } = await fetchMarketQuotes(selected.map((market) => ({
+        symbol: market.symbol,
+        sessionDate: indiaDateKey(market.sessionOpenAt),
+        historicalOnly: now.getTime() - market.sessionCloseAt.getTime() >= HISTORICAL_CLOSE_AGE_MS,
+      }))));
+    } catch (error) {
+      quoteFailure = error.message;
+      console.error('Market quote fetch failed', error);
     }
   }
   const quotesBySymbol = new Map(
@@ -847,14 +846,17 @@ export async function settleDueMarkets(now = new Date()) {
     dueMarkets.map(async (market) => {
       if (!quoteReady.has(market.id)) {
         skipped.push({ marketId: market.id, symbol: market.symbol,
-          reason: checkReasonByMarket.get(market.id) ?? quoteFailure ??
-            'Waiting for the next market-time status check' });
+          reason: quoteFailure ??
+            (quoteAttemptsToday(market, now) >= MAX_QUOTE_ATTEMPTS_PER_DAY
+              ? 'Daily Yahoo quote check limit reached; will retry tomorrow'
+              : 'Waiting for the next quote check') });
         return;
       }
       const quote = quotesBySymbol.get(market.symbol.toUpperCase());
-      if (quoteFailure || !quote) {
+      const marketFailure = quoteFailure ?? quoteFailures.get(market.symbol);
+      if (marketFailure || !quote) {
         skipped.push({ marketId: market.id, symbol: market.symbol,
-          reason: quoteFailure ?? 'No quote was returned by the provider; will retry' });
+          reason: marketFailure ?? 'No usable Yahoo quote; will retry after 15 minutes' });
         return;
       }
 
@@ -862,7 +864,7 @@ export async function settleDueMarkets(now = new Date()) {
           !Number.isFinite(Number(quote.regularMarketPrice)) ||
           !isQuoteFromClosingSession(quote, market, now)) {
         skipped.push({ marketId: market.id, symbol: market.symbol,
-          reason: 'Regular-session quote is missing or does not match the pending session; will retry' });
+          reason: 'Index is not confirmed closed or its regular-session quote is missing; will retry after 15 minutes' });
         return;
       }
 

@@ -93,28 +93,41 @@ kept when the participation guard is added.
 
 Market create, update, and delete endpoints require an admin JWT issued by
 `POST /api/v1/admin/login`; mobile user tokens cannot modify markets. Admins
-set an `openTime` in 24-hour Asia/Kolkata time and a two-letter `countryCode`
-(RapidAPI `region` value). They cannot set the close time. The backend checks
-markets on startup and every minute. The cron endpoint remains available for
-an external scheduler if needed. At or after the configured open time, it calls Yahoo
-Finance `market/get-market-time?region=...` for the market's country, validates the
-returned close timestamp, and persists it for the session. `RAPIDAPI_KEY` is
-required. `YAHOO_MARKET_TIME_URL` can override the endpoint URL. Until a valid
-API close is stored, betting and settlement are closed. The close timestamp
-and its IST time are saved together; no separate verification flag is needed.
-Older unverified closes are cleared by the migration and fetched again. The
-backend makes at most one market-time request per market per IST day and skips
-weekends. If no valid close is returned, betting stays closed until the next
-trading-day lookup. Betting stops `BET_CUTOFF_MINUTES` before
-the persisted close (15 minutes by default), enforced by the backend. Once the
-current time is later than the API close plus `RESULT_DELAY_MINUTES` (0 by default),
-the cron checks `status` from `YAHOO_MARKET_TIME_URL` for that market's country.
-Only `closed` permits fetching a quote and settling, and the quote timestamp
-must match the pending session. Open, missing, and unknown statuses remain
-pending. The status check repeats every 15 minutes. The original close time
-and betting cutoff stay fixed, so betting cannot reopen. Missing or stale
-quotes leave the round pending for another check. An unsettled session's close
-time is never replaced by the next session's schedule.
+set `openTime` and `closeTime` in 24-hour Asia/Kolkata time and a two-letter
+`countryCode`. The backend checks markets on startup and every minute. The cron
+endpoint remains available for an external scheduler. At the configured open
+time, it saves that session's close timestamp. Markets without a configured close
+time remain unavailable until an admin sets one. Betting stops at the saved
+session close time, enforced by the backend.
+The scheduler makes no Yahoo request before a result is due. It fetches
+`https://finance.yahoo.com/quote/{symbol}/` and uses Cheerio to read the
+symbol-specific quote heading, price, and notice. "As of ... Market Open" means
+the index is still open. "At close:" means Yahoo reports it closed. The global
+"U.S. markets closed" banner is ignored because it appears on other countries'
+quote pages too. A closed notice may omit its date, so only then does the
+backend fetch `/quote/{symbol}/history/` to verify that the latest daily close
+belongs to the pending session and matches the displayed price. For a session
+over 24 hours old, it reads that session's dated historical close in one request.
+Korean and
+German index results also wait at least 20 minutes after their exchange close.
+An open, stale, invalid, or unavailable quote is retried after at least 15
+minutes, up to four checks per market per IST day. The next day's check can
+resume a pending session. Each open check uses one page request; a closed check
+uses two. The saved close stays fixed during an unsettled session. Changed Yahoo
+markup fails closed.
+
+Yahoo supplies the quote notice and historical price. A guaranteed settlement
+requires a final value published by the index provider or exchange.
+
+If Prisma reports a missing `markets.betting_closes_at` column, regenerate the
+local client with `npm run prisma:generate` and restart the backend. That field
+was removed from the Prisma schema; it is calculated from `session_close_at`.
+The `start` and `dev` scripts regenerate the client before launching. If the
+server cannot run the latest Prisma migration, run
+[`sql/manual-market-scraping.sql`](sql/manual-market-scraping.sql) against the
+application's MySQL database before restarting. It only drops the obsolete
+`last_close_fetch_at` column; earlier migrations must already be applied. The
+manual script does not update Prisma's migration ledger.
 
 Withdrawal amounts are reserved from the user's wallet when a request is
 submitted. Rejecting a request returns the reserved amount to the wallet;

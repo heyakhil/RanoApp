@@ -69,7 +69,18 @@ export async function updateMarket(id, input) {
     );
   }
 
-  if (input.openTime !== undefined || input.countryCode !== undefined) {
+  const scheduleChanged = ['openTime', 'closeTime', 'countryCode', 'symbol'].some(
+    (field) => input[field] !== undefined && input[field] !== currentMarket[field]);
+  const pendingSession = currentMarket.sessionCloseAt &&
+    (!currentMarket.lastSettledClose || currentMarket.lastSettledClose < currentMarket.sessionCloseAt);
+  const closeTimeOnly = input.closeTime !== undefined &&
+    ['openTime', 'countryCode', 'symbol'].every((field) =>
+      input[field] === undefined || input[field] === currentMarket[field]);
+  if (scheduleChanged && !(pendingSession && closeTimeOnly)) {
+    if (pendingSession) {
+      throw new ApiError(409, 'Wait for the current round to settle before changing market schedule',
+        'MARKET_ROUND_ACTIVE');
+    }
     const activeBets = await prisma.marketEntry.count({
       where: { marketId: id, roundNumber: currentMarket.currentRound },
     });
@@ -83,9 +94,9 @@ export async function updateMarket(id, input) {
       where: { id },
       data: {
         ...input,
-        ...(input.openTime !== undefined || input.countryCode !== undefined
+        ...(scheduleChanged && !(pendingSession && closeTimeOnly)
           ? { sessionOpenAt: null, sessionCloseAt: null,
-              lastCloseFetchAt: null, closeTime: null }
+              quoteFetchAttempts: 0, lastQuoteFetchAt: null }
           : {}),
       },
     });
