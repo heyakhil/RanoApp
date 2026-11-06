@@ -27,6 +27,21 @@ export function sessionTimes(day, openTime, closeTime) {
   return { openAt, closeAt };
 }
 
+/**
+ * @param {{sessionOpenAt: Date | null, sessionCloseAt: Date | null,
+ *   lastSettledClose: Date | null}} market
+ * @param {{openAt: Date, closeAt: Date}} times
+ * @param {Date} now
+ * @returns {boolean}
+ */
+export function shouldOpenSession(market, times, now) {
+  if (now < times.openAt || indiaDay(market.sessionOpenAt ?? new Date(0)) === indiaDay(now)) {
+    return false;
+  }
+  return !market.sessionCloseAt ||
+    Boolean(market.lastSettledClose && market.lastSettledClose >= market.sessionCloseAt);
+}
+
 /** @param {Date} now */
 export async function syncOpenedMarketSessions(now = new Date()) {
   const today = indiaDay(now);
@@ -42,10 +57,7 @@ export async function syncOpenedMarketSessions(now = new Date()) {
       skipped.push({ marketId: market.id, reason: 'Set a close time in the admin panel' });
       continue;
     }
-    if (now < times.openAt || indiaDay(market.sessionOpenAt ?? new Date(0)) === today) continue;
-    if (market.lastSettledClose && indiaDay(market.lastSettledClose) === today) continue;
-    if (market.sessionCloseAt &&
-        (!market.lastSettledClose || market.lastSettledClose < market.sessionCloseAt)) continue;
+    if (!shouldOpenSession(market, times, now)) continue;
 
     const updated = await prisma.market.updateMany({
       where: { id: market.id, openTime: market.openTime, closeTime: market.closeTime,

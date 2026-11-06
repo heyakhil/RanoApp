@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
 
 process.env.DATABASE_URL ??= 'mysql://test:test@127.0.0.1:3306/test';
 process.env.JWT_SECRET ??= 'test-secret';
 process.env.RESULT_DELAY_MINUTES = '5';
 const { scheduledResultAt, isResultDue, canPlaceBet, toPublicMarket,
-  shouldFetchQuote, isQuoteFromClosingSession } =
+  shouldFetchQuote, shouldReadHistoricalClose, isQuoteFromClosingSession } =
   await import('./bet.service.js');
-const { sessionTimes, syncOpenedMarketSessions } =
+const { sessionTimes, shouldOpenSession, syncOpenedMarketSessions } =
   await import('./market-time.service.js');
 const { fetchMarketQuotes, parseYahooQuotePage, parseYahooHistoryPage } =
   await import('./quote.service.js');
@@ -18,6 +19,19 @@ test('admin times create an IST session and support an overnight close', () => {
     '2026-11-02T10:00:00.000Z');
   assert.equal(sessionTimes('2026-11-02', '22:00', '02:00').closeAt.toISOString(),
     '2026-11-02T20:30:00.000Z');
+});
+
+test('overnight market can reopen on the day its previous session settled', () => {
+  const now = new Date('2026-11-06T14:00:00Z');
+  const times = sessionTimes('2026-11-06', '19:00', '02:30');
+  const market = {
+    sessionOpenAt: new Date('2026-11-05T13:30:00Z'),
+    sessionCloseAt: new Date('2026-11-05T21:00:00Z'),
+    lastSettledClose: new Date('2026-11-05T21:00:00Z'),
+  };
+  assert.equal(shouldOpenSession(market, times, now), true);
+  assert.equal(shouldOpenSession({ ...market, lastSettledClose: null }, times, now), false);
+  assert.equal(shouldOpenSession({ ...market, sessionOpenAt: times.openAt }, times, now), false);
 });
 
 test('does not start market sessions on weekends', async () => {
@@ -99,6 +113,14 @@ test('limits quote page requests to four attempts per IST day', () => {
     new Date('2026-11-02T07:05:30Z')), true);
 });
 
+test('reads a previous session from history even before 24 hours have passed', () => {
+  const market = { sessionOpenAt: new Date('2026-11-05T03:45:00Z') };
+  assert.equal(shouldReadHistoricalClose(market, new Date('2026-11-05T10:05:00Z')),
+    false);
+  assert.equal(shouldReadHistoricalClose(market, new Date('2026-11-06T06:11:00Z')),
+    true);
+});
+
 function quoteHtml(symbol, price, notice) {
   return `<div data-testid="quote-title"><h1>Index (${symbol})</h1></div>
     <section data-testid="quote-price"><span data-testid="qsp-price">${price}</span>
@@ -153,6 +175,36 @@ test('fetches only the quote page while Yahoo says the index is open', async () 
     assert.equal(quotes[0].marketState, 'REGULAR');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('Yahoo requests accept response headers larger than the default limit', async () => {
+  const originalFetch = globalThis.fetch;
+  let dispatcher;
+  globalThis.fetch = async (_url, options) => {
+    dispatcher = options.dispatcher;
+    return new Response(quoteHtml('^KS11', '5,415.33',
+      'As of 1:25:50 PM GMT+9. Market Open.'));
+  };
+  try {
+    await fetchMarketQuotes([{
+      symbol: '^KS11', sessionDate: '2026-11-04', historicalOnly: false,
+    }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const server = createServer((_request, response) => {
+    response.setHeader('x-large-header', 'a'.repeat(32 * 1024));
+    response.end('ok');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address();
+    const response = await originalFetch(`http://127.0.0.1:${port}/`, { dispatcher });
+    assert.equal(await response.text(), 'ok');
+  } finally {
+    server.close();
   }
 });
 

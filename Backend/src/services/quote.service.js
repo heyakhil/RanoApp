@@ -1,7 +1,10 @@
 import * as cheerio from 'cheerio';
+import { Agent } from 'undici';
 import { ApiError } from '../utils/ApiError.js';
 
 const MAX_PAGE_BYTES = 5_000_000;
+// Yahoo's response headers can exceed Undici's 16 KiB default.
+const yahooDispatcher = new Agent({ maxHeaderSize: 64 * 1024, connections: 5 });
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -32,7 +35,8 @@ async function readPage(response) {
 async function fetchPage(url) {
   let response;
   try {
-    response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(8_000),
+    response = await fetch(url, { dispatcher: yahooDispatcher, redirect: 'error',
+      signal: AbortSignal.timeout(8_000),
       headers: { Accept: 'text/html', 'Accept-Language': 'en-US,en;q=0.9',
         'User-Agent': 'Mozilla/5.0 (compatible; RanoMarket/1.0)' } });
   } catch (error) {

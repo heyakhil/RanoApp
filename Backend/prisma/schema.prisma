@@ -202,7 +202,6 @@ model MarketRound {
   market           Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
   @@unique([marketId, roundNumber])
-  @@unique([marketId, settledOn])
   @@index([settledAt])
   @@index([sessionOn])
   @@map("market_rounds")

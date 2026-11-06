@@ -12,7 +12,6 @@ const ONE_DIGIT_MULTIPLIER = 9;
 const QUOTE_RECHECK_MINUTES = 15;
 const INDEX_QUOTE_LAG_MINUTES = 20;
 const MAX_QUOTE_ATTEMPTS_PER_DAY = 4;
-const HISTORICAL_CLOSE_AGE_MS = 24 * 60 * 60_000;
 
 function moneyNumber(value) {
   return Math.round(Number(value ?? 0) * 100) / 100;
@@ -84,6 +83,11 @@ export function shouldFetchQuote(market, now) {
   return quoteAttemptsToday(market, now) < MAX_QUOTE_ATTEMPTS_PER_DAY &&
     (!market.lastQuoteFetchAt ||
       now.getTime() - market.lastQuoteFetchAt.getTime() >= QUOTE_RECHECK_MINUTES * 60_000);
+}
+
+/** @param {{sessionOpenAt: Date}} market @param {Date} now */
+export function shouldReadHistoricalClose(market, now) {
+  return indiaDateKey(market.sessionOpenAt) !== indiaDateKey(now);
 }
 
 export function isQuoteFromClosingSession(quote, market, now) {
@@ -585,15 +589,15 @@ export async function declareMarketResult(marketId, result, options = {}) {
     }
 
     const settledOn = settlementDate(now);
-    const alreadySettledToday = await tx.marketRound.findFirst({
-      where: { marketId, settledOn },
+    const alreadySettledRound = await tx.marketRound.findUnique({
+      where: { marketId_roundNumber: { marketId, roundNumber: market.currentRound } },
       select: { id: true },
     });
 
-    if (alreadySettledToday) {
+    if (alreadySettledRound) {
       throw new ApiError(
         409,
-        'A result for this market is already recorded for this date',
+        'A result for this market round is already recorded',
         'MARKET_RESULT_EXISTS',
       );
     }
@@ -716,10 +720,11 @@ export async function declareMarketResult(marketId, result, options = {}) {
     };
     });
   } catch (error) {
-    if (uniqueConstraint(error).includes('settled_on')) {
+    if (uniqueConstraint(error).includes('round_number') ||
+        uniqueConstraint(error).includes('settled_on')) {
       throw new ApiError(
         409,
-        'A result for this market is already recorded for this date',
+        'A result for this market round is already recorded',
         'MARKET_RESULT_EXISTS',
       );
     }
@@ -767,11 +772,12 @@ export async function settleDueMarkets(now = new Date()) {
     return { synced, syncSkipped, settled: [], canceled: [], skipped: [] };
   }
 
-  const dueIds = dueBySchedule.map((market) => market.id);
-  const settledToday = await prisma.marketRound.findMany({
+  const settledRounds = await prisma.marketRound.findMany({
     where: {
-      marketId: { in: dueIds },
-      settledOn: settlementDate(now),
+      OR: dueBySchedule.map((market) => ({
+        marketId: market.id,
+        roundNumber: market.currentRound,
+      })),
     },
     select: {
       marketId: true,
@@ -780,24 +786,24 @@ export async function settleDueMarkets(now = new Date()) {
       status: true,
     },
   });
-  const settledTodayByMarket = new Map(
-    settledToday.map((round) => [round.marketId, round]),
+  const settledRoundByMarket = new Map(
+    settledRounds.map((round) => [round.marketId, round]),
   );
   const skipped = dueBySchedule
-    .filter((market) => settledTodayByMarket.has(market.id))
+    .filter((market) => settledRoundByMarket.has(market.id))
     .map((market) => {
-      const round = settledTodayByMarket.get(market.id);
+      const round = settledRoundByMarket.get(market.id);
       return {
         marketId: market.id,
         symbol: market.symbol,
-        reason: 'A result is already recorded for this market today',
+        reason: 'A result is already recorded for this market round',
         settledRound: round.roundNumber,
         result: round.result,
         status: round.status,
       };
     });
   const dueMarkets = dueBySchedule.filter(
-    (market) => !settledTodayByMarket.has(market.id),
+    (market) => !settledRoundByMarket.has(market.id),
   );
 
   if (dueMarkets.length === 0) {
@@ -829,7 +835,7 @@ export async function settleDueMarkets(now = new Date()) {
       ({ quotes, failures: quoteFailures } = await fetchMarketQuotes(selected.map((market) => ({
         symbol: market.symbol,
         sessionDate: indiaDateKey(market.sessionOpenAt),
-        historicalOnly: now.getTime() - market.sessionCloseAt.getTime() >= HISTORICAL_CLOSE_AGE_MS,
+        historicalOnly: shouldReadHistoricalClose(market, now),
       }))));
     } catch (error) {
       quoteFailure = error.message;
