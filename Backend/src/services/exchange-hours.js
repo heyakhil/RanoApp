@@ -1,6 +1,13 @@
 const exchangeCloses = {
+  HK: { timeZone: 'Asia/Hong_Kong', hour: 16, minute: 10 },
   KR: { timeZone: 'Asia/Seoul', hour: 15, minute: 30 },
   DE: { timeZone: 'Europe/Berlin', hour: 18, minute: 0 },
+  US: { timeZone: 'America/New_York', hour: 16, minute: 0 },
+};
+
+// Yahoo can publish the Dow close more than an hour after the 16:00 cash close.
+const symbolCloses = {
+  '^DJI': { timeZone: 'America/New_York', hour: 16, minute: 0 },
 };
 
 /**
@@ -21,10 +28,12 @@ function localParts(at, timeZone) {
 /**
  * @param {string} countryCode
  * @param {Date | null | undefined} sessionOpenAt
+ * @param {string | null | undefined} symbol
  * @returns {Date | null}
  */
-export function minimumMarketClose(countryCode, sessionOpenAt) {
-  const exchange = exchangeCloses[countryCode];
+export function minimumMarketClose(countryCode, sessionOpenAt, symbol) {
+  const exchange = symbolCloses[String(symbol ?? '').toUpperCase()] ??
+    exchangeCloses[countryCode];
   if (!exchange || !sessionOpenAt) return null;
 
   const opened = localParts(sessionOpenAt, exchange.timeZone);

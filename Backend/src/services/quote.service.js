@@ -54,10 +54,22 @@ async function fetchPage(url) {
   }
 }
 
-/** @param {unknown} price @returns {string} */
+/**
+ * Two digits Yahoo shows after rounding to cents. A raw close such as
+ * 51523.05859375 is displayed as 51,523.06, so the result is 06.
+ * @param {unknown} price
+ * @returns {string}
+ */
 export function digitsAfterDecimal(price) {
-  const fraction = String(price).split('.')[1] ?? '';
-  return `${fraction.replace(/\D/g, '')}00`.slice(0, 2);
+  const numeric = Number(price);
+  if (!Number.isFinite(numeric)) return '00';
+  const cents = Math.round(Math.abs(numeric) * 100);
+  return String(cents % 100).padStart(2, '0');
+}
+
+/** @param {number} price @returns {number} */
+function roundedCents(price) {
+  return Math.round(price * 100);
 }
 
 /** @param {string} text @returns {number | null} */
@@ -138,12 +150,28 @@ export async function fetchMarketQuotes(requests) {
     }
     const base = `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`;
     if (historicalOnly) {
-      const history = parseYahooHistoryPage(await fetchPage(`${base}history/`),
-        symbol, sessionDate);
+      const [historyPage, quotePage] = await Promise.all([
+        fetchPage(`${base}history/`),
+        fetchPage(base),
+      ]);
+      const history = parseYahooHistoryPage(historyPage, symbol, sessionDate);
       if (!history) throw new ApiError(502,
         `Yahoo has no dated historical close for ${symbol} on ${sessionDate}`,
         'QUOTE_RESPONSE_INVALID');
-      return { symbol, ...history, marketState: 'CLOSED' };
+      const quote = parseYahooQuotePage(quotePage, symbol);
+      if (quote?.marketState === 'CLOSED' &&
+          roundedCents(history.regularMarketPrice) !== roundedCents(quote.regularMarketPrice)) {
+        throw new ApiError(502, `Yahoo closing date or price is unconfirmed for ${symbol}`,
+          'QUOTE_RESPONSE_INVALID');
+      }
+      return {
+        symbol,
+        ...history,
+        regularMarketPrice: quote?.marketState === 'CLOSED'
+          ? quote.regularMarketPrice
+          : history.regularMarketPrice,
+        marketState: 'CLOSED',
+      };
     }
     const quote = parseYahooQuotePage(await fetchPage(base), symbol);
     if (!quote) throw new ApiError(502, `Yahoo quote page is incomplete for ${symbol}`,
@@ -151,8 +179,8 @@ export async function fetchMarketQuotes(requests) {
     if (quote.marketState === 'REGULAR') return quote;
 
     const history = parseYahooHistoryPage(await fetchPage(`${base}history/`), symbol);
-    if (!history || Math.round(history.regularMarketPrice * 100) !==
-        Math.round(quote.regularMarketPrice * 100)) {
+    if (!history || roundedCents(history.regularMarketPrice) !==
+        roundedCents(quote.regularMarketPrice)) {
       throw new ApiError(502, `Yahoo closing date or price is unconfirmed for ${symbol}`,
         'QUOTE_RESPONSE_INVALID');
     }

@@ -10,8 +10,8 @@ const { scheduledResultAt, isResultDue, canPlaceBet, toPublicMarket,
   await import('./bet.service.js');
 const { sessionTimes, shouldOpenSession, syncOpenedMarketSessions } =
   await import('./market-time.service.js');
-const { fetchMarketQuotes, parseYahooQuotePage, parseYahooHistoryPage } =
-  await import('./quote.service.js');
+const { fetchMarketQuotes, parseYahooQuotePage, parseYahooHistoryPage,
+  digitsAfterDecimal } = await import('./quote.service.js');
 const { minimumMarketClose } = await import('./exchange-hours.js');
 
 test('admin times create an IST session and support an overnight close', () => {
@@ -148,6 +148,13 @@ test('recognizes the live open and closed quote notices for the requested index'
   assert.equal(parseYahooQuotePage(quoteHtml('^KS11', '5,415.33', 'Unknown'), '^KS11'), null);
 });
 
+test('rounds to the cents Yahoo displays before taking the result', () => {
+  assert.equal(digitsAfterDecimal(52389.75), '75');
+  assert.equal(digitsAfterDecimal(51523.05859375), '06');
+  assert.equal(digitsAfterDecimal(52502.05859375), '06');
+  assert.equal(digitsAfterDecimal(51285.73046875), '73');
+});
+
 test('reads the dated close from the symbol history page', () => {
   assert.deepEqual(parseYahooHistoryPage(historyHtml('^DJI', 'Nov 4, 2026', '53,356.12'), '^DJI'),
     { sessionDate: '2026-11-04', regularMarketPrice: 53356.12 });
@@ -245,10 +252,48 @@ test('reads an older pending session from one historical page request', async ()
     const { quotes, failures } = await fetchMarketQuotes([{
       symbol: '^HSI', sessionDate: '2026-11-03', historicalOnly: true,
     }]);
-    assert.deepEqual(urls, ['https://finance.yahoo.com/quote/%5EHSI/history/']);
+    assert.deepEqual(urls, ['https://finance.yahoo.com/quote/%5EHSI/history/',
+      'https://finance.yahoo.com/quote/%5EHSI/']);
     assert.deepEqual(quotes, [{ symbol: '^HSI', sessionDate: '2026-11-03',
       regularMarketPrice: 26123.79, marketState: 'CLOSED' }]);
     assert.equal(failures.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('does not settle Dow from the cash close before Yahoo publishes it', () => {
+  const market = {
+    countryCode: 'IN', symbol: '^DJI',
+    sessionOpenAt: new Date('2026-11-09T13:30:00Z'),
+    sessionCloseAt: new Date('2026-11-09T21:00:00Z'),
+    lastSettledClose: null,
+  };
+  assert.equal(minimumMarketClose('IN', market.sessionOpenAt, '^DJI').toISOString(),
+    '2026-11-09T21:00:00.000Z');
+  assert.equal(scheduledResultAt(market).toISOString(), '2026-11-09T22:30:00.000Z');
+  const early = new Date('2026-11-09T21:05:28Z');
+  assert.equal(isResultDue(market, early), false);
+  assert.equal(isQuoteFromClosingSession({
+    sessionDate: '2026-11-09', marketState: 'CLOSED',
+  }, market, early), false);
+  assert.equal(isResultDue(market, new Date('2026-11-09T22:30:01Z')), true);
+  assert.equal(isQuoteFromClosingSession({
+    sessionDate: '2026-11-09', marketState: 'CLOSED',
+  }, market, new Date('2026-11-09T22:30:01Z')), true);
+});
+
+test('rejects a historical close that disagrees with the quote page', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => new Response(String(url).endsWith('/history/')
+    ? historyHtml('^DJI', 'Nov 9, 2026', '52,502.06')
+    : quoteHtml('^DJI', '52,389.75', 'At close: 5:12:54 PM EST'));
+  try {
+    const { quotes, failures } = await fetchMarketQuotes([{
+      symbol: '^DJI', sessionDate: '2026-11-09', historicalOnly: true,
+    }]);
+    assert.equal(quotes.length, 0);
+    assert.match(failures.get('^DJI'), /unconfirmed/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -300,6 +345,20 @@ test('uses the Korean exchange close even when Yahoo reports an early close', ()
     sessionDate: '2026-11-04',
     marketState: 'CLOSED',
   }, market, new Date('2026-11-04T06:55:00Z')), true);
+});
+
+test('waits for the Hong Kong closing auction and quote lag before settling', () => {
+  const market = {
+    countryCode: 'HK',
+    sessionOpenAt: new Date('2026-11-06T03:45:00Z'),
+    sessionCloseAt: new Date('2026-11-06T08:10:00Z'),
+    lastSettledClose: null,
+  };
+  assert.equal(minimumMarketClose('HK', market.sessionOpenAt).toISOString(),
+    '2026-11-06T08:10:00.000Z');
+  assert.equal(scheduledResultAt(market).toISOString(), '2026-11-06T08:30:00.000Z');
+  assert.equal(isResultDue(market, new Date('2026-11-06T08:15:39Z')), false);
+  assert.equal(isResultDue(market, new Date('2026-11-06T08:30:01Z')), true);
 });
 
 test('uses Berlin daylight saving time for the German index close', () => {

@@ -11,6 +11,8 @@ const TWO_DIGIT_MULTIPLIER = 70;
 const ONE_DIGIT_MULTIPLIER = 9;
 const QUOTE_RECHECK_MINUTES = 15;
 const INDEX_QUOTE_LAG_MINUTES = 20;
+// Yahoo published the 9 Nov 2026 Dow close at 17:12 ET, 72 minutes after 16:00.
+const DOW_QUOTE_LAG_MINUTES = 90;
 const MAX_QUOTE_ATTEMPTS_PER_DAY = 4;
 
 function moneyNumber(value) {
@@ -37,12 +39,19 @@ function settlementDate(now = new Date()) {
   return new Date(`${formatted}T00:00:00.000Z`);
 }
 
+function quoteLagMinutes(market) {
+  const symbol = String(market.symbol ?? '').toUpperCase();
+  if (symbol === '^DJI' || market.countryCode === 'US') return DOW_QUOTE_LAG_MINUTES;
+  return INDEX_QUOTE_LAG_MINUTES;
+}
+
 export function scheduledResultAt(market) {
   if (!market.sessionCloseAt) return null;
-  const minimumClose = minimumMarketClose(market.countryCode, market.sessionOpenAt);
+  const minimumClose = minimumMarketClose(
+    market.countryCode, market.sessionOpenAt, market.symbol);
   const apiDueAt = market.sessionCloseAt.getTime() + env.resultDelayMinutes * 60_000;
   const exchangeDueAt = minimumClose
-    ? minimumClose.getTime() + Math.max(env.resultDelayMinutes, INDEX_QUOTE_LAG_MINUTES) * 60_000
+    ? minimumClose.getTime() + Math.max(env.resultDelayMinutes, quoteLagMinutes(market)) * 60_000
     : 0;
   return new Date(Math.max(apiDueAt, exchangeDueAt));
 }
@@ -92,12 +101,10 @@ export function shouldReadHistoricalClose(market, now) {
 
 export function isQuoteFromClosingSession(quote, market, now) {
   if (!market.sessionOpenAt || !market.sessionCloseAt) return false;
-  const minimumClose = minimumMarketClose(market.countryCode, market.sessionOpenAt);
+  const dueAt = scheduledResultAt(market);
   const state = String(quote?.marketState ?? '').toUpperCase();
-  if (state !== 'CLOSED') return false;
-  return quote?.sessionDate === indiaDateKey(market.sessionOpenAt) &&
-    now >= market.sessionCloseAt &&
-    (!minimumClose || now >= minimumClose);
+  if (state !== 'CLOSED' || !dueAt || now.getTime() <= dueAt.getTime()) return false;
+  return quote?.sessionDate === indiaDateKey(market.sessionOpenAt);
 }
 
 async function creditBetCommission(tx, entry) {

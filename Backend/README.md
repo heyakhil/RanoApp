@@ -108,8 +108,8 @@ quote pages too. A closed notice may omit its date, so only then does the
 backend fetch `/quote/{symbol}/history/` to verify that the latest daily close
 belongs to the pending session and matches the displayed price. For a session
 over 24 hours old, it reads that session's dated historical close in one request.
-Korean and
-German index results also wait at least 20 minutes after their exchange close.
+Hong Kong, Korean, and German index results also wait at least 20 minutes after
+their exchange close.
 An open, stale, invalid, or unavailable quote is retried after at least 15
 minutes, up to four checks per market per IST day. The next day's check can
 resume a pending session. Each open check uses one page request; a closed check
