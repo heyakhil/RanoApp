@@ -6,12 +6,12 @@ process.env.DATABASE_URL ??= 'mysql://test:test@127.0.0.1:3306/test';
 process.env.JWT_SECRET ??= 'test-secret';
 process.env.RESULT_DELAY_MINUTES = '5';
 const { scheduledResultAt, isResultDue, canPlaceBet, toPublicMarket,
-  shouldFetchQuote, shouldReadHistoricalClose, isQuoteFromClosingSession } =
-  await import('./bet.service.js');
+  shouldFetchQuote, shouldReadHistoricalClose, isQuoteFromClosingSession,
+  closeReadyToPublish } = await import('./bet.service.js');
 const { sessionTimes, shouldOpenSession, syncOpenedMarketSessions } =
   await import('./market-time.service.js');
 const { fetchMarketQuotes, parseYahooQuotePage, parseYahooHistoryPage,
-  digitsAfterDecimal } = await import('./quote.service.js');
+  historySessionState, digitsAfterDecimal } = await import('./quote.service.js');
 const { minimumMarketClose } = await import('./exchange-hours.js');
 
 test('admin times create an IST session and support an overnight close', () => {
@@ -111,6 +111,39 @@ test('limits quote page requests to four attempts per IST day', () => {
     new Date('2026-11-03T07:05:30Z')), true);
   assert.equal(shouldFetchQuote({ quoteFetchAttempts: 181, lastQuoteFetchAt },
     new Date('2026-11-02T07:05:30Z')), true);
+  assert.equal(shouldFetchQuote({
+    quoteFetchAttempts: 4,
+    lastQuoteFetchAt,
+    sessionOpenAt: new Date('2026-11-01T03:45:00Z'),
+  }, new Date('2026-11-02T07:05:30Z')), true);
+});
+
+test('holds a fresh close until the same cents are seen again', () => {
+  const market = {
+    sessionCloseAt: new Date('2026-11-11T06:30:00Z'),
+    pendingCloseCents: null,
+    pendingCloseSeenAt: null,
+  };
+  const firstSeen = new Date('2026-11-11T06:50:00Z');
+  assert.equal(closeReadyToPublish(market, '75', firstSeen), false);
+  assert.equal(closeReadyToPublish({
+    ...market,
+    pendingCloseCents: '75',
+    pendingCloseSeenAt: firstSeen,
+  }, '36', new Date('2026-11-11T07:40:00Z')), false);
+  assert.equal(closeReadyToPublish({
+    ...market,
+    pendingCloseCents: '36',
+    pendingCloseSeenAt: firstSeen,
+  }, '36', new Date('2026-11-11T07:34:00Z')), false);
+  assert.equal(closeReadyToPublish({
+    ...market,
+    pendingCloseCents: '36',
+    pendingCloseSeenAt: firstSeen,
+  }, '36', new Date('2026-11-11T07:35:00Z')), true);
+  assert.equal(closeReadyToPublish({
+    sessionCloseAt: new Date('2026-11-10T10:00:00Z'),
+  }, '40', new Date('2026-11-13T13:30:00Z')), true);
 });
 
 test('reads a previous session from history even before 24 hours have passed', () => {
@@ -252,8 +285,7 @@ test('reads an older pending session from one historical page request', async ()
     const { quotes, failures } = await fetchMarketQuotes([{
       symbol: '^HSI', sessionDate: '2026-11-03', historicalOnly: true,
     }]);
-    assert.deepEqual(urls, ['https://finance.yahoo.com/quote/%5EHSI/history/',
-      'https://finance.yahoo.com/quote/%5EHSI/']);
+    assert.deepEqual(urls, ['https://finance.yahoo.com/quote/%5EHSI/history/']);
     assert.deepEqual(quotes, [{ symbol: '^HSI', sessionDate: '2026-11-03',
       regularMarketPrice: 26123.79, marketState: 'CLOSED' }]);
     assert.equal(failures.size, 0);
@@ -283,17 +315,50 @@ test('does not settle Dow from the cash close before Yahoo publishes it', () => 
   }, market, new Date('2026-11-09T22:30:01Z')), true);
 });
 
-test('rejects a historical close that disagrees with the quote page', async () => {
+test('rejects a same-day close that disagrees with the quote page', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => new Response(String(url).endsWith('/history/')
     ? historyHtml('^DJI', 'Nov 9, 2026', '52,502.06')
     : quoteHtml('^DJI', '52,389.75', 'At close: 5:12:54 PM EST'));
   try {
     const { quotes, failures } = await fetchMarketQuotes([{
-      symbol: '^DJI', sessionDate: '2026-11-09', historicalOnly: true,
+      symbol: '^DJI', sessionDate: '2026-11-09', historicalOnly: false,
     }]);
     assert.equal(quotes.length, 0);
     assert.match(failures.get('^DJI'), /unconfirmed/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('treats a missing date between published closes as a day without trading', () => {
+  const closes = [
+    { sessionDate: '2026-11-11', regularMarketPrice: 81879.4 },
+    { sessionDate: '2026-11-09', regularMarketPrice: 81106.65 },
+  ];
+  assert.equal(historySessionState(closes, '2026-11-10').status, 'not_traded');
+  assert.equal(historySessionState(closes, '2026-11-11').status, 'traded');
+  assert.equal(historySessionState(closes, '2026-11-08').status, 'unknown');
+});
+
+test('reports a holiday from the history page without using today\'s quote', async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  const html = historyHtml('^BSESN', 'Nov 11, 2026', '81,879.40')
+    .replace('</tbody>', '<tr><td>Nov 9, 2026</td><td>1</td><td>1</td><td>1</td><td>81,106.65</td></tr></tbody>');
+  globalThis.fetch = async (url) => {
+    urls.push(url);
+    return new Response(html);
+  };
+  try {
+    const { quotes, failures } = await fetchMarketQuotes([{
+      symbol: '^BSESN', sessionDate: '2026-11-10', historicalOnly: true,
+    }]);
+    assert.deepEqual(urls, ['https://finance.yahoo.com/quote/%5EBSESN/history/']);
+    assert.equal(failures.size, 0);
+    assert.deepEqual(quotes, [{
+      symbol: '^BSESN', sessionDate: '2026-11-10', marketState: 'NOT_TRADED',
+    }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

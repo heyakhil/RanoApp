@@ -64,7 +64,8 @@ export async function syncOpenedMarketSessions(now = new Date()) {
         sessionOpenAt: market.sessionOpenAt, sessionCloseAt: market.sessionCloseAt,
         lastSettledClose: market.lastSettledClose },
       data: { sessionOpenAt: times.openAt, sessionCloseAt: times.closeAt,
-        quoteFetchAttempts: 0, lastQuoteFetchAt: null },
+        quoteFetchAttempts: 0, lastQuoteFetchAt: null,
+        pendingCloseCents: null, pendingCloseSeenAt: null },
     });
     if (updated.count) synced.push({ marketId: market.id, closeAt: times.closeAt });
   }

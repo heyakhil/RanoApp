@@ -105,16 +105,19 @@ symbol-specific quote heading, price, and notice. "As of ... Market Open" means
 the index is still open. "At close:" means Yahoo reports it closed. The global
 "U.S. markets closed" banner is ignored because it appears on other countries'
 quote pages too. A closed notice may omit its date, so only then does the
-backend fetch `/quote/{symbol}/history/` to verify that the latest daily close
-belongs to the pending session and matches the displayed price. For a session
-over 24 hours old, it reads that session's dated historical close in one request.
-Hong Kong, Korean, and German index results also wait at least 20 minutes after
-their exchange close.
+backend fetch `/quote/{symbol}/history/` and use that session's dated close.
+The quote headline must match that close. A close less than three hours old is
+published only after the same cents are seen again 45 minutes later, so an
+early print cannot become the result. For an older session, the dated history
+row is the result and today's quote headline is ignored.
+If that date sits between two published closes and has no row, the session did
+not trade. Stakes on that round are refunded, no result is published, and the
+scheduler continues with the next weekday, including days missed while the
+market was stuck. Hong Kong, Korean, and German index results also wait at
+least 20 minutes after their exchange close.
 An open, stale, invalid, or unavailable quote is retried after at least 15
-minutes, up to four checks per market per IST day. The next day's check can
-resume a pending session. Each open check uses one page request; a closed check
-uses two. The saved close stays fixed during an unsettled session. Changed Yahoo
-markup fails closed.
+minutes, up to four checks per market per IST day. A session left over from an
+earlier day is not subject to that daily cap. Changed Yahoo markup fails closed.
 
 Yahoo supplies the quote notice and historical price. A guaranteed settlement
 requires a final value published by the index provider or exchange.

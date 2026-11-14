@@ -96,7 +96,8 @@ export async function updateMarket(id, input) {
         ...input,
         ...(scheduleChanged && !(pendingSession && closeTimeOnly)
           ? { sessionOpenAt: null, sessionCloseAt: null,
-              quoteFetchAttempts: 0, lastQuoteFetchAt: null }
+              quoteFetchAttempts: 0, lastQuoteFetchAt: null,
+              pendingCloseCents: null, pendingCloseSeenAt: null }
           : {}),
       },
     });

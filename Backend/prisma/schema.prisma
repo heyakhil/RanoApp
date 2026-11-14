@@ -136,6 +136,8 @@ model Market {
   sessionCloseAt  DateTime? @map("session_close_at")
   quoteFetchAttempts Int @default(0) @map("quote_fetch_attempts")
   lastQuoteFetchAt DateTime? @map("last_quote_fetch_at")
+  pendingCloseCents String? @map("pending_close_cents") @db.VarChar(2)
+  pendingCloseSeenAt DateTime? @map("pending_close_seen_at")
   maxParticipants Int      @map("max_participants")
   participants    Int      @default(0)
   minBetAmount    Decimal        @map("min_bet_amount") @db.Decimal(10, 2)

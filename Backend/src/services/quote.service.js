@@ -119,15 +119,22 @@ export function parseYahooQuotePage(html, symbol) {
  * @param {string | null} sessionDate
  * @returns {{sessionDate: string, regularMarketPrice: number} | null}
  */
-export function parseYahooHistoryPage(html, symbol, sessionDate = null) {
+/**
+ * Dated daily closes from the symbol history table, newest first.
+ * @param {string} html
+ * @param {string} symbol
+ * @returns {{sessionDate: string, regularMarketPrice: number}[]}
+ */
+export function listYahooHistoryCloses(html, symbol) {
   const $ = loadSymbolPage(html, symbol);
-  if (!$) return null;
+  if (!$) return [];
   const table = $('table').toArray().find((element) => {
     const headers = $(element).find('thead th');
     return headers.eq(0).text().trim().startsWith('Date') &&
       headers.eq(4).text().trim().startsWith('Close');
   });
-  if (!table) return null;
+  if (!table) return [];
+  const closes = [];
   for (const row of $(table).find('tbody tr').toArray()) {
     const cells = $(row).find('td');
     const match = /^(\w{3}) (\d{1,2}), (\d{4})$/.exec(cells.eq(0).text().trim());
@@ -135,11 +142,33 @@ export function parseYahooHistoryPage(html, symbol, sessionDate = null) {
     if (!month) continue;
     const rowDate = `${match[3]}-${String(month).padStart(2, '0')}-${match[2].padStart(2, '0')}`;
     if (new Date(`${rowDate}T00:00:00Z`).getUTCDate() !== Number(match[2])) continue;
-    if (sessionDate && rowDate !== sessionDate) continue;
     const price = parsePrice(cells.eq(4).text().trim());
-    return price === null ? null : { sessionDate: rowDate, regularMarketPrice: price };
+    if (price !== null) closes.push({ sessionDate: rowDate, regularMarketPrice: price });
   }
-  return null;
+  return closes;
+}
+
+/**
+ * A date inside the history table with no row did not trade. A date outside
+ * the table is unknown: the close may not be published yet, or the page does
+ * not go back far enough to prove a holiday.
+ * @param {{sessionDate: string, regularMarketPrice: number}[]} closes
+ * @param {string} sessionDate
+ * @returns {{status: 'traded', close: {sessionDate: string, regularMarketPrice: number}}
+ *   | {status: 'not_traded' | 'unknown'}}
+ */
+export function historySessionState(closes, sessionDate) {
+  const match = closes.find((row) => row.sessionDate === sessionDate);
+  if (match) return { status: 'traded', close: match };
+  const covered = closes.some((row) => row.sessionDate < sessionDate) &&
+    closes.some((row) => row.sessionDate > sessionDate);
+  return { status: covered ? 'not_traded' : 'unknown' };
+}
+
+export function parseYahooHistoryPage(html, symbol, sessionDate = null) {
+  const closes = listYahooHistoryCloses(html, symbol);
+  if (sessionDate) return closes.find((row) => row.sessionDate === sessionDate) ?? null;
+  return closes[0] ?? null;
 }
 
 /** @param {{symbol: string, sessionDate: string, historicalOnly: boolean}[]} requests */
@@ -149,42 +178,38 @@ export async function fetchMarketQuotes(requests) {
       throw new ApiError(400, 'Invalid market symbol', 'INVALID_MARKET_SYMBOL');
     }
     const base = `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`;
-    if (historicalOnly) {
-      const [historyPage, quotePage] = await Promise.all([
-        fetchPage(`${base}history/`),
-        fetchPage(base),
-      ]);
-      const history = parseYahooHistoryPage(historyPage, symbol, sessionDate);
-      if (!history) throw new ApiError(502,
+    let quote = null;
+    if (!historicalOnly) {
+      quote = parseYahooQuotePage(await fetchPage(base), symbol);
+      if (!quote) throw new ApiError(502, `Yahoo quote page is incomplete for ${symbol}`,
+        'QUOTE_RESPONSE_INVALID');
+      if (quote.marketState === 'REGULAR') return quote;
+    }
+    const historyPage = await fetchPage(`${base}history/`);
+    const state = historySessionState(listYahooHistoryCloses(historyPage, symbol), sessionDate);
+    if (state.status === 'not_traded') {
+      return { symbol, sessionDate, marketState: 'NOT_TRADED' };
+    }
+    if (state.status !== 'traded') {
+      throw new ApiError(502,
         `Yahoo has no dated historical close for ${symbol} on ${sessionDate}`,
         'QUOTE_RESPONSE_INVALID');
-      const quote = parseYahooQuotePage(quotePage, symbol);
-      if (quote?.marketState === 'CLOSED' &&
-          roundedCents(history.regularMarketPrice) !== roundedCents(quote.regularMarketPrice)) {
-        throw new ApiError(502, `Yahoo closing date or price is unconfirmed for ${symbol}`,
-          'QUOTE_RESPONSE_INVALID');
-      }
-      return {
-        symbol,
-        ...history,
-        regularMarketPrice: quote?.marketState === 'CLOSED'
-          ? quote.regularMarketPrice
-          : history.regularMarketPrice,
-        marketState: 'CLOSED',
-      };
     }
-    const quote = parseYahooQuotePage(await fetchPage(base), symbol);
-    if (!quote) throw new ApiError(502, `Yahoo quote page is incomplete for ${symbol}`,
-      'QUOTE_RESPONSE_INVALID');
-    if (quote.marketState === 'REGULAR') return quote;
-
-    const history = parseYahooHistoryPage(await fetchPage(`${base}history/`), symbol);
-    if (!history || roundedCents(history.regularMarketPrice) !==
-        roundedCents(quote.regularMarketPrice)) {
+    // A previous session is confirmed by its own dated row. The quote headline
+    // belongs to the current session and must not reject that older close.
+    if (!historicalOnly && (
+      quote?.marketState !== 'CLOSED' ||
+      roundedCents(state.close.regularMarketPrice) !== roundedCents(quote.regularMarketPrice)
+    )) {
       throw new ApiError(502, `Yahoo closing date or price is unconfirmed for ${symbol}`,
         'QUOTE_RESPONSE_INVALID');
     }
-    return { ...quote, ...history };
+    return {
+      symbol,
+      sessionDate: state.close.sessionDate,
+      regularMarketPrice: state.close.regularMarketPrice,
+      marketState: 'CLOSED',
+    };
   }));
   const quotes = [];
   const failures = new Map();
